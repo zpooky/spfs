@@ -26,11 +26,11 @@ struct spfs_directory {
 };
 
 struct spfs_super_block {
-  unsigned long version;
-  unsigned long magic;
-  unsigned long block_size;
+  unsigned int version;
+  unsigned int magic;
+  unsigned int block_size;
 
-  char dummy[SPOOKY_FS_BLOCK_SIZE - (sizeof(unsigned long) * 3)];
+  char dummy[SPOOKY_FS_BLOCK_SIZE - (sizeof(unsigned int) * 3)];
 };
 
 #endif

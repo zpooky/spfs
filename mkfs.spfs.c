@@ -1,6 +1,7 @@
 #include "spfs.h"
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h> //memset
 
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -9,7 +10,27 @@
 
 static int
 super_block(int fd) {
-  return 1;
+  struct stat s;
+  memset(&s, 0, sizeof(s));
+  int ret = fstat(fd, &s);
+  if (ret != 0) {
+    return ret;
+  }
+
+  struct spfs_super_block super = {
+      .version = 1,
+      .magic = SPOOKY_FS_MAGIC,
+      .block_size = SPOOKY_FS_BLOCK_SIZE,
+  };
+
+  super.version = htonl(super.version);
+  super.magic = htonl(super.magic);
+  super.block_size = htonl(super.block_size);
+  memset(super.dummy, 0, sizeof(super.dummy));
+
+  write(fd, &super, sizeof(super));
+
+  return 0;
 }
 
 int
@@ -23,7 +44,7 @@ main(int argc, const char **args) {
       return 1;
     }
 
-    if (!super_block(fd)) {
+    if (super_block(fd) != 0) {
       fprintf(stderr, "failed to write superblock\n", device);
       close(fd);
       return 1;
