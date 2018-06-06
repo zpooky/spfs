@@ -1,13 +1,22 @@
-obj-m += hello-1.o
-obj-m += hello-2.o
-obj-m += hello-3.o
-obj-m += hello-4.o
-obj-m += hello-5.o
-obj-m += startstop.o
-startstop-objs := start.o stop.o
+obj-m := spfs.o
+spfs-objs := simple.o
+ccflags-y := -DSPFS_DEBUG
 
-all:
+MKFS := mkfs.spfs
+OBJECTS := mkfs.spfs.o
+CXXFLAGS := -std=gnu89
+
+all: ko $(MKFS)
+
+ko:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
+
+%.o: %.c
+	$(CC) $(CXXFLAGS) -c $< -o $@
+
+$(MKFS): $(OBJECTS)
+	$(CC) $(OBJECTS) -o $(MKFS)
 
 clean:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
+	rm mkfs-spfs

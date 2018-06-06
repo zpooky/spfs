@@ -2,6 +2,7 @@
 #define _SP_FS_H
 
 #include <linux/limits.h>
+#include <sys/types.h> //mode_t
 
 #define SPOOKY_FS_MAGIC 0xDEADBEEF
 
@@ -9,27 +10,27 @@
 
 struct spfs_entry {
   char name[NAME_MAX];
-  uint64_t inode_no;
+  unsigned int inode_no;
 };
 
 struct spfs_file {
-  spfs_entry entry;
+  struct spfs_entry entry;
   mode_t mode;
 };
 
 struct spfs_directory {
-  spfs_entry entry;
+  struct spfs_entry entry;
   mode_t mode;
 
-  spfs_entry[64];
+  struct spfs_entry children[64];
 };
 
 struct spfs_super_block {
-  uint64_t version;
-  uint64_t magic;
-  uint64_t block_size;
+  unsigned long version;
+  unsigned long magic;
+  unsigned long block_size;
 
-  char dummy[SPOOKY_FS_BLOCK_SIZE - (sizeof(uint64_t) * 3)];
+  char dummy[SPOOKY_FS_BLOCK_SIZE - (sizeof(unsigned long) * 3)];
 };
 
 #endif
