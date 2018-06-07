@@ -36,13 +36,18 @@ struct spfs_child_list {
 
 struct spfs_block_header {
   // TODO
-  spfs_block_header *next;
+  struct spfs_block_header *next;
+};
+
+enum spfs_entry_kind {
+  spfs_entry_kind_DIRECTORY,
+  spfs_entry_kind_FILE,
 };
 
 struct spfs_entry {
   struct spfs_inode inode;
 
-  //TAG either file or dir
+  // TAG either file or dir
   union {
     struct spfs_child_list *children;
     struct spfs_block_header *file;

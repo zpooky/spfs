@@ -26,9 +26,10 @@ super_block(int fd) {
   super.version = htonl(super.version);
   super.magic = htonl(super.magic);
   super.block_size = htonl(super.block_size);
-  memset(super.dummy, 0, sizeof(super.dummy));
 
   write(fd, &super, sizeof(super));
+
+  /* TODO memset(super.dummy, 0, sizeof(super.dummy)); */
 
   return 0;
 }

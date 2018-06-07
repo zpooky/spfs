@@ -3,9 +3,11 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 
+#include <linux/fs.h>
 #include <linux/slab.h> /* kzalloc, ... */
 
-#include <linux/fs.h>
+#include "btree.h"
+
 /*
  * # linux/fs.h
  * - struct super_block
@@ -64,9 +66,10 @@ const struct file_operations spfs_file_ops = {
 };
 
 //=====================================
-static spfs_node *
-spfs_btree_init() {
-  return NULL;
+static int
+spfs_entry_cmp(const spfs_entry *, const spfs_entry *) {
+  // TODO
+  return 0;
 }
 
 static int
@@ -85,17 +88,27 @@ spfs_init_super_block(struct spfs_super_block *super) {
     return -EIO;
   }
 
-  memcpy(super, bh->b_data, sizeof(*super));
+  memcpy(/*DEST*/ super, /*SRC*/ bh->b_data, sizeof(*super));
   brelse(bh);
-  // TODO byte swap
+
+  tree->version = be32_to_cpu(head->version);
+  tree->magic = be32_to_cpu(head->magic);
+  tree->block_size = be32_to_cpu(head->block_size);
+
+  if (tree->magic != SPOOKY_FS_MAGIC) {
+    return -ENOMEM;
+  }
+
+  if (tree->block_size != SPOOKY_FS_BLOCK_SIZE) {
+    return -ENOMEM;
+  }
+
+  super->tree = spfs_btree_init(spfs_entry_cmp);
+  if (!super->tree) {
+    return -ENOMEM;
+  }
 
   return 0;
-}
-
-static spfs_entry *
-spfs_btree_lookup(struct spfs_super_block *, unsigned long ino) {
-  // TODO
-  return NULL;
 }
 
 static unsigned char
