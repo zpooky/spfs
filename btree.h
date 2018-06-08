@@ -18,7 +18,8 @@ struct spfs_btree {
   struct mutex tree_lock;
 };
 
-extern struct spfs_btree *spfs_btree_init(btree_cmp);
+extern int
+spfs_btree_init(struct spfs_btree *, btree_cmp);
 
 extern struct spfs_entry *
 spfs_btree_lookup(struct spfs_btree *, unsigned long ino);

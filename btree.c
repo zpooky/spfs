@@ -1,25 +1,18 @@
 #include "btree.h"
 
 #include <linux/slab.h> /* kzalloc, ... */
-#include <linux/module.h>
 
-struct spfs_btree *
-spfs_btree_init(btree_cmp cmp) {
-  struct spfs_btree *tree;
-
+extern int
+spfs_btree_init(struct spfs_btree *tree, btree_cmp);
   struct address_space *mapping;
   struct page *page;
   unsigned int size;
-
-  tree = kzalloc(sizeof(*tree), GFP_KERNEL);
-  if (!tree)
-    return NULL;
 
   tree->root = NULL;
   tree->cmp = cmp;
   mutex_init(&tree->tree_lock);
 
-  return tree;
+  return 0;
 }
 
 struct spfs_entry *
@@ -35,4 +28,3 @@ spfs_btree_insert(struct spfs_btree *tree, struct spfs_entry *in) {
   return NULL;
 }
 
-MODULE_LICENSE("GPL");

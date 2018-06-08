@@ -1,4 +1,4 @@
-#include "spfs.h"
+#include <arpa/inet.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h> //memset
@@ -7,6 +7,11 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+
+#include <sys/stat.h> //mode_t
+#include <sys/types.h>
+
+#include "spfs.h"
 
 static int
 super_block(int fd) {
@@ -17,7 +22,7 @@ super_block(int fd) {
     return ret;
   }
 
-  struct spfs_super_block super = {
+  struct spfs_super_block_wire super = {
       .version = 1,
       .magic = SPOOKY_FS_MAGIC,
       .block_size = SPOOKY_FS_BLOCK_SIZE,
@@ -46,7 +51,7 @@ main(int argc, const char **args) {
     }
 
     if (super_block(fd) != 0) {
-      fprintf(stderr, "failed to write superblock\n", device);
+      fprintf(stderr, "failed to write superblock: '%s'\n", device);
       close(fd);
       return 1;
     }

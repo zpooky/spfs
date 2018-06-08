@@ -1,13 +1,10 @@
-#include "spfs.h"
+#include "sp.h"
 
 #include <linux/kernel.h>
 #include <linux/module.h>
 
 #include <linux/fs.h>
 #include <linux/slab.h> /* kzalloc, ... */
-
-#include "btree.h"
-
 /*
  * # linux/fs.h
  * - struct super_block
@@ -49,12 +46,12 @@ static struct inode_operations spfs_inode_ops = {
 
 //=====================================
 static ssize_t
-spfs_read(struct file *, char __user *, size_t, loff_t *) {
+spfs_read(struct file *, char *, size_t, loff_t *) {
   return 0;
 }
 
 static ssize_t
-spfs_write(struct file *, const char __user *, size_t, loff_t *) {
+spfs_write(struct file *, const char *, size_t, loff_t *) {
   return 0;
 }
 
@@ -67,18 +64,21 @@ const struct file_operations spfs_file_ops = {
 
 //=====================================
 static int
-spfs_entry_cmp(const spfs_entry *, const spfs_entry *) {
+spfs_entry_cmp(const struct spfs_entry *, const struct spfs_entry *) {
   // TODO
   return 0;
 }
 
 static int
-spfs_init_super_block(struct spfs_super_block *super) {
+spfs_init_super_block(struct super_block *sb, struct spfs_super_block *super) {
+  BUG_ON(!sb);
+  BUG_ON(!super);
+
   struct buffer_head *bh;
   sector_t offset;
 
   offset = 0;
-  bh = sb_bread(info->vfs_sb, offset);
+  bh = sb_bread(sb, offset);
   if (!bh) {
     return -EIO;
   }
@@ -88,23 +88,25 @@ spfs_init_super_block(struct spfs_super_block *super) {
     return -EIO;
   }
 
-  memcpy(/*DEST*/ super, /*SRC*/ bh->b_data, sizeof(*super));
-  brelse(bh);
+  {
+    spfs_super_block_wire wire;
+    memcpy(/*DEST*/ &wire, /*SRC*/ bh->b_data, sizeof(wire));
+    brelse(bh);
 
-  tree->version = be32_to_cpu(head->version);
-  tree->magic = be32_to_cpu(head->magic);
-  tree->block_size = be32_to_cpu(head->block_size);
+    super->version = be32_to_cpu(wire.version);
+    super->magic = be32_to_cpu(wire.magic);
+    super->block_size = be32_to_cpu(wire.block_size);
+  }
 
-  if (tree->magic != SPOOKY_FS_MAGIC) {
+  if (super->magic != SPOOKY_FS_MAGIC) {
     return -ENOMEM;
   }
 
-  if (tree->block_size != SPOOKY_FS_BLOCK_SIZE) {
+  if (super->block_size != SPOOKY_FS_BLOCK_SIZE) {
     return -ENOMEM;
   }
 
-  super->tree = spfs_btree_init(spfs_entry_cmp);
-  if (!super->tree) {
+  if (!spfs_btree_init(&super->tree, spfs_entry_cmp)) {
     return -ENOMEM;
   }
 
@@ -123,22 +125,42 @@ get_bit_pos(unsigned long val) {
 }
 
 static int
+spfs_convert_inode(struct inode *root_inode, const struct spfs_entry *src) {
+  BUG_ON(!root_inode);
+  BUG_ON(!src);
+
+  /* TODO */
+  /* root_inode->i_ino = src->ino; */
+
+  inode_init_owner(root_inode, NULL, S_IFDIR);
+  root_inode->i_sb = sb;
+  root_inode->i_op = &spfs_inode_ops;
+  root_inode->i_fop = &spfs_file_ops;
+
+  root_inode->i_atime = root_inode->i_mtime = root_inode->i_ctime =
+      current_time(root_inode);
+  /* fs or device private pointer */
+  /* root_inode->i_private =; */
+  return 0;
+}
+
+static int
 spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
   struct inode *root_inode;
-  struct spfs_super_block *spi;
+  struct spfs_super_block *sbi;
 
-  sbi = kzalloc(sizeof(struct spfs_super_block), GFP_KERNEL);
+  sbi = kzalloc(sizeof(*sbi), GFP_KERNEL);
   if (!sbi) {
     return -ENOMEM;
   }
 
-  if (!spfs_init_super_block(sbi)) {
+  if (!spfs_init_super_block(sb, sbi)) {
     kfree(sbi);
     return -EIO; // TODO lookup error codes
   }
 
   /* Filesystem private info */
-  sp->s_fs_info = sbi;
+  sb->s_fs_info = sbi;
   /*  */
   sb->s_flags |= MS_NODIRATIME;
   /* TODO document why we do this */
@@ -152,16 +174,15 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
     // TODO cleanup
     return -ENOMEM;
   }
-  root_inode->i_ino = SPFS_ROOT_INODE_NO;
-  inode_init_owner(root_inode, NULL, S_IFDIR);
-  root_inode->i_sb = sb;
-  root_inode->i_op = &spfs_inode_ops;
-  root_inode->i_fop = &spfs_file_ops;
 
-  root_inode->i_atime = root_inode->i_mtime = root_inode->i_ctime =
-      current_time(root_inode);
-  /* fs or device private pointer */
-  root_inode->i_private = spfs_btree_lookup(sb, root_inode->i_ino);
+  struct spfs_entry *root = spfs_btree_lookup(&sbi->tree, SPFS_ROOT_INODE_NO);
+  if (!root) {
+    return -ENOMEM;
+  }
+
+  if (!spfs_convert_inode(root_inode, root)) {
+    return -ENOMEM;
+  }
 
   sb->s_root = d_make_root(root_inode);
   if (!sb->s_root) {
@@ -180,7 +201,7 @@ spfs_mount(struct file_system_type *fs_type, int flags, const char *dev_name,
 
 static void
 spfs_kill_superblock(struct super_block *sb) {
-  struct spfs_super_block *spi;
+  struct spfs_super_block *sbi;
   sbi = sb->s_fs_info;
   if (sbi) {
     kfree(sbi);
@@ -201,7 +222,7 @@ static int __init
 spfs_init(void) {
   printk(KERN_INFO "init spfs\n");
 
-  int ret = register_filesystem(&sp_fs_type);
+  int ret = register_filesystem(&spfs_fs_type);
   if (likely(ret == 0)) {
     printk(KERN_INFO "Sucessfully register_filesystem(simplefs)\n");
   } else {
@@ -215,7 +236,7 @@ static void __exit
 spfs_exit(void) {
   printk(KERN_INFO "exit spfs\n");
 
-  int ret = unregister_filesystem(&sp_fs_type);
+  int ret = unregister_filesystem(&spfs_fs_type);
   if (likely(ret == 0)) {
     printk(KERN_INFO "Sucessfully unregister_filesystem(simplefs)\n");
   } else {
@@ -227,4 +248,4 @@ module_init(spfs_init);
 module_exit(spfs_exit);
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Fredrik Olsson")
+MODULE_AUTHOR("Fredrik Olsson");
