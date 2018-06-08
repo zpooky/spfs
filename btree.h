@@ -1,8 +1,10 @@
 #ifndef _SP_FS_BTREE_H
 #define _SP_FS_BTREE_H
 
-#include "spfs.h"
 #include <linux/mutex.h>
+#include <stddef.h>
+
+#include "spfs.h"
 
 typedef int (*btree_cmp)(const struct spfs_entry *, const struct spfs_entry *);
 

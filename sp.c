@@ -1,5 +1,6 @@
 #include "sp.h"
 
+#include <linux/buffer_head.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 
@@ -21,18 +22,19 @@
  */
 
 //=====================================
+
 static int
-spfs_create(struct inode *, struct dentry *, umode_t, bool) {
+spfs_create(struct inode *d1, struct dentry *d2, umode_t mode, bool excl) {
   return 0;
 }
 
 static int
-spfs_mkdir(struct inode *, struct dentry *, umode_t) {
+spfs_mkdir(struct inode *parent, struct dentry *child, umode_t mode) {
   return 0;
 }
 
 static struct dentry *
-spfs_lookup(struct inode *, struct dentry *, unsigned int) {
+spfs_lookup(struct inode *parent, struct dentry *child, unsigned int flags) {
   return NULL;
 }
 
@@ -46,12 +48,12 @@ static struct inode_operations spfs_inode_ops = {
 
 //=====================================
 static ssize_t
-spfs_read(struct file *, char *, size_t, loff_t *) {
+spfs_read(struct file *file, char *buf, size_t len, loff_t *pos) {
   return 0;
 }
 
 static ssize_t
-spfs_write(struct file *, const char *, size_t, loff_t *) {
+spfs_write(struct file *file, const char *buf, size_t len, loff_t *pos) {
   return 0;
 }
 
@@ -64,18 +66,21 @@ const struct file_operations spfs_file_ops = {
 
 //=====================================
 static int
-spfs_entry_cmp(const struct spfs_entry *, const struct spfs_entry *) {
+spfs_entry_cmp(const struct spfs_entry *f, const struct spfs_entry *s) {
+  BUG_ON(!f);
+  BUG_ON(!s);
+
   // TODO
   return 0;
 }
 
 static int
 spfs_init_super_block(struct super_block *sb, struct spfs_super_block *super) {
-  BUG_ON(!sb);
-  BUG_ON(!super);
-
   struct buffer_head *bh;
   sector_t offset;
+
+  BUG_ON(!sb);
+  BUG_ON(!super);
 
   offset = 0;
   bh = sb_bread(sb, offset);
@@ -89,7 +94,7 @@ spfs_init_super_block(struct super_block *sb, struct spfs_super_block *super) {
   }
 
   {
-    spfs_super_block_wire wire;
+    struct spfs_super_block_wire wire;
     memcpy(/*DEST*/ &wire, /*SRC*/ bh->b_data, sizeof(wire));
     brelse(bh);
 
@@ -133,7 +138,8 @@ spfs_convert_inode(struct inode *root_inode, const struct spfs_entry *src) {
   /* root_inode->i_ino = src->ino; */
 
   inode_init_owner(root_inode, NULL, S_IFDIR);
-  root_inode->i_sb = sb;
+  /* TODO */
+  /* root_inode->i_sb = sb; */
   root_inode->i_op = &spfs_inode_ops;
   root_inode->i_fop = &spfs_file_ops;
 
@@ -147,6 +153,7 @@ spfs_convert_inode(struct inode *root_inode, const struct spfs_entry *src) {
 static int
 spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
   struct inode *root_inode;
+  struct spfs_entry *root_entry;
   struct spfs_super_block *sbi;
 
   sbi = kzalloc(sizeof(*sbi), GFP_KERNEL);
@@ -168,19 +175,18 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
   sb->s_blocksize = sbi->block_size;
   sb->s_blocksize_bits = get_bit_pos(sbi->block_size);
 
-  //
+  root_entry = spfs_btree_lookup(&sbi->tree, SPFS_ROOT_INODE_NO);
+  if (!root_entry) {
+    return -ENOMEM;
+  }
+
   root_inode = new_inode(sb);
   if (!root_inode) {
     // TODO cleanup
     return -ENOMEM;
   }
 
-  struct spfs_entry *root = spfs_btree_lookup(&sbi->tree, SPFS_ROOT_INODE_NO);
-  if (!root) {
-    return -ENOMEM;
-  }
-
-  if (!spfs_convert_inode(root_inode, root)) {
+  if (!spfs_convert_inode(root_inode, root_entry)) {
     return -ENOMEM;
   }
 
@@ -220,9 +226,11 @@ struct file_system_type spfs_fs_type = {
 //=====================================
 static int __init
 spfs_init(void) {
+  int ret;
+
   printk(KERN_INFO "init spfs\n");
 
-  int ret = register_filesystem(&spfs_fs_type);
+  ret = register_filesystem(&spfs_fs_type);
   if (likely(ret == 0)) {
     printk(KERN_INFO "Sucessfully register_filesystem(simplefs)\n");
   } else {
@@ -234,9 +242,11 @@ spfs_init(void) {
 
 static void __exit
 spfs_exit(void) {
+  int ret;
+
   printk(KERN_INFO "exit spfs\n");
 
-  int ret = unregister_filesystem(&spfs_fs_type);
+  ret = unregister_filesystem(&spfs_fs_type);
   if (likely(ret == 0)) {
     printk(KERN_INFO "Sucessfully unregister_filesystem(simplefs)\n");
   } else {

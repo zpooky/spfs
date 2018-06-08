@@ -3,10 +3,12 @@
 #include <linux/slab.h> /* kzalloc, ... */
 
 extern int
-spfs_btree_init(struct spfs_btree *tree, btree_cmp);
-  struct address_space *mapping;
-  struct page *page;
-  unsigned int size;
+spfs_btree_init(struct spfs_btree *tree, btree_cmp cmp) {
+  /* struct address_space *mapping; */
+  /* struct page *page; */
+  /* unsigned int size; */
+
+  BUG_ON(!tree);
 
   tree->root = NULL;
   tree->cmp = cmp;
@@ -27,4 +29,3 @@ spfs_btree_insert(struct spfs_btree *tree, struct spfs_entry *in) {
   // TODO
   return NULL;
 }
-
