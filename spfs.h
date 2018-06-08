@@ -2,7 +2,10 @@
 #define _SP_FS_H
 
 #include <linux/limits.h>
-#include <sys/types.h> //mode_t
+#include <linux/types.h>
+// #include <sys/stat.h> //mode_t
+// #include <sys/types.h>
+#include <stddef.h>
 
 #define SPOOKY_FS_MAGIC 0xDEADBEEF
 #define SPOOKY_FS_BLOCK_SIZE 4096
