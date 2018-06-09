@@ -26,7 +26,7 @@ super_block(int fd) {
       .version = 1,
       .magic = SPOOKY_FS_MAGIC,
       .block_size = SPOOKY_FS_BLOCK_SIZE,
-      .id = 1,
+      .id = SPFS_ROOT_INODE_NO,
   };
 
   super.version = htonl(super.version);
@@ -46,7 +46,7 @@ main(int argc, const char **args) {
     const char *device = args[1];
 
     int fd = open(device, O_RDWR);
-    if (fd != 0) {
+    if (fd <= 0) {
       fprintf(stderr, "failed to open('%s', O_RDWR)\n", device);
       return 1;
     }

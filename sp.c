@@ -22,6 +22,7 @@
  */
 static const struct inode_operations spfs_inode_ops;
 static const struct file_operations spfs_file_ops;
+static const struct file_operations spfs_dir_ops;
 
 //=====================================
 static int
@@ -41,6 +42,7 @@ static struct inode *
 spfs_new_inode(struct super_block *sb, const struct inode *dir, umode_t mode) {
   struct spfs_super_block *sbi;
   struct inode *inode;
+  struct spfs_priv_inode *priv_inode;
 
   sbi = sb->s_fs_info;
   BUG_ON(!sbi);
@@ -60,7 +62,7 @@ spfs_new_inode(struct super_block *sb, const struct inode *dir, umode_t mode) {
       break;
     case S_IFDIR:
       inode->i_op = &spfs_inode_ops;
-      inode->i_fop = &simple_dir_operations;
+      inode->i_fop = &spfs_dir_ops;
 
       inc_nlink(inode); // TODO
       break;
@@ -69,6 +71,15 @@ spfs_new_inode(struct super_block *sb, const struct inode *dir, umode_t mode) {
     }
 
     inode->i_atime = inode->i_mtime = inode->i_ctime = current_time(inode);
+
+    priv_inode = kzalloc(sizeof(*priv_inode), GFP_KERNEL);
+    if (!priv_inode) {
+      // TODO gc
+      return NULL;
+    }
+    mutex_init(&priv_inode->lock);
+    // TODO add callback when inode gets destroyed to cleanup i_priv;
+    inode->i_private = priv_inode;
   }
 
   return inode;
@@ -183,12 +194,61 @@ static const struct inode_operations spfs_inode_ops = {
 };
 
 //=====================================
+/*
+ * Used to retrieve data from the device.
+ * A non-negative return value represents the number of bytes successfully read.
+ */
 static ssize_t
-spfs_read(struct file *file, char *buf, size_t len, loff_t *pos) {
-  // TODO
-  return 0;
+spfs_read(struct file *file, char __user *buf, size_t len, loff_t *ppos) {
+  struct inode *inode;
+  struct spfs_priv_inode *priv_inode;
+  struct super_block *sb;
+  struct spfs_super_block *sbi;
+  struct spfs_entry *entry;
+
+  if (!ppos) {
+    return -EINVAL;
+  }
+
+  BUG_ON(!file);
+
+  inode = file->f_inode;
+  BUG_ON(!inode);
+
+  BUG_ON(!S_ISREG(inode->i_mode));
+
+  priv_inode = inode->i_private;
+  BUG_ON(!priv_inode);
+
+  sb = inode->i_sb;
+  BUG_ON(!sb);
+
+  sbi = sb->s_fs_info;
+  BUG_ON(!sbi);
+
+  {
+    mutex_lock(&sbi->tree.lock);
+    entry = spfs_btree_lookup(&sbi->tree, inode->i_ino);
+    mutex_unlock(&sbi->tree.lock);
+  }
+
+  if (entry) {
+    mutex_lock(&priv_inode->lock);
+
+    // TODO
+
+    mutex_unlock(&priv_inode->lock);
+    return 0;
+  }
+
+  return -EINVAL;
 }
 
+/*
+ * Sends data to the device. If missing, -EINVAL is returned to the program
+ * calling the write system call. The return value, if non-negative, represents
+ * the number of bytes successfully written.
+ */
 static ssize_t
 spfs_write(struct file *file, const char *buf, size_t len, loff_t *pos) {
   // TODO
@@ -201,7 +261,112 @@ static const struct file_operations spfs_file_ops = {
     .write = spfs_write
     /**/
 };
+//=====================================
+static bool
+spfs_sb_read_u32(struct buffer_head *bh, unsigned int *out) {
+  // TODO
+  *out = 0;
+  return true;
+}
 
+static int
+spfs_iterate(struct file *file, struct dir_context *ctx) {
+  struct super_block *sb;
+  struct spfs_super_block *sbi;
+  struct inode *inode;
+  struct spfs_entry *res;
+  struct spfs_priv_inode *priv_inode;
+
+  inode = file_inode(file);
+  if (ctx->pos >= inode->i_size) {
+    return 0;
+  }
+
+  sb = inode->i_sb;
+  BUG_ON(!sb);
+
+  sbi = sb->s_fs_info;
+  BUG_ON(!sbi);
+
+  priv_inode = inode->i_private;
+  BUG_ON(!priv_inode);
+
+  {
+    unsigned int children_total;
+    unsigned int sub_list;
+
+    mutex_lock(&priv_inode->lock);
+    {
+      mutex_lock(&sbi->tree.lock);
+      res = spfs_btree_lookup(&sbi->tree, inode->i_ino);
+
+      if (!res) {
+        mutex_unlock(&sbi->tree.lock);
+        mutex_unlock(&priv_inode->lock);
+        return -ENOMEM; //
+      }
+
+      sub_list = res->children;
+
+      BUG_ON(!S_ISDIR(inode->i_mode));
+      BUG_ON(res->kind != spfs_entry_kind_dir);
+
+      mutex_unlock(&sbi->tree.lock);
+    }
+
+    children_total = 0;
+  Lit:
+    if (sub_list) {
+      /*
+       * [next:u32,children:u32,ino:u32...]:4096
+       */
+      unsigned int current_inode;
+      unsigned int next;
+      unsigned int children;
+      unsigned int i;
+      struct buffer_head *bh;
+
+      bh = sb_bread(sb, sub_list);
+      BUG_ON(!bh);
+      if (!spfs_sb_read_u32(bh, &next)) {
+        return -ENOMEM; // TODO
+      }
+      if (!spfs_sb_read_u32(bh, &children)) {
+        return -ENOMEM; // TODO
+      }
+      // TODO assert children < max
+
+      i = 0;
+      while (i < children) {
+        if (!spfs_sb_read_u32(bh, &current_inode)) {
+          return -ENOMEM; // TODO
+        }
+        if (current_inode) {
+          ++i;
+        }
+      }
+
+      brelse(bh);
+
+      sub_list = next;
+      goto Lit;
+    }
+
+    mutex_unlock(&priv_inode->lock);
+  }
+
+  /* dir_emit(ctx, "spooky", SPOOKY_FS_NAME_MAX, 2, DT_UNKNOWN); */
+
+  /* ctx->pos = inode->i_size + 1; */
+
+  return 0;
+}
+
+static const struct file_operations spfs_dir_ops = {
+    /**/
+    .iterate = spfs_iterate,
+    /**/
+};
 //=====================================
 static int
 spfs_entry_cmp(const struct spfs_entry *f, const struct spfs_entry *s) {
@@ -296,7 +461,7 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
   /* sb->s_blocksize = sbi->block_size; */
   /* sb->s_blocksize_bits = get_bit_pos(sbi->block_size); */
 
-  root_entry = spfs_btree_lookup(&sbi->tree, SPFS_ROOT_INODE_NO);
+  root_entry = spfs_btree_lookup(&sbi->tree, SPFS_ROOT_INODE_NO); // TODO lock
   if (root_entry) {
     // TODO create default
     root = NULL;

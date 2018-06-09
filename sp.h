@@ -21,4 +21,8 @@ struct spfs_super_block {
   bool dirty; // TODO?
 };
 
+struct spfs_priv_inode {
+  struct mutex lock;
+};
+
 #endif

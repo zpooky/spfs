@@ -46,12 +46,16 @@ enum spfs_entry_kind {
   spfs_entry_kind_FILE,
 };
 
+#define spfs_entry_kind_file 1
+#define spfs_entry_kind_dir 2
+
 struct spfs_entry {
   struct spfs_inode inode;
 
   // TAG either file or dir
+  int kind;
   union {
-    struct spfs_child_list *children;
+    unsigned int children;
     struct spfs_block_header *file;
   };
 };
