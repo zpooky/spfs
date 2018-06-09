@@ -11,6 +11,7 @@ struct spfs_super_block_wire {
   unsigned int version;
   unsigned int magic;
   unsigned int block_size;
+  unsigned int id;
 
   // TODO spfs_super_block should occopy 4096 on disk but not in memory
   // char dummy[SPOOKY_FS_BLOCK_SIZE - (sizeof(unsigned int) * 2)];
@@ -18,7 +19,13 @@ struct spfs_super_block_wire {
 
 struct spfs_inode {
   unsigned long inode_no;
+
+  unsigned int atime;
+  unsigned int mtime;
+  unsigned int ctime;
+
   mode_t mode;
+
   char name[SPOOKY_FS_NAME_MAX];
 };
 

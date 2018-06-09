@@ -26,6 +26,7 @@ super_block(int fd) {
       .version = 1,
       .magic = SPOOKY_FS_MAGIC,
       .block_size = SPOOKY_FS_BLOCK_SIZE,
+      .id = 1,
   };
 
   super.version = htonl(super.version);

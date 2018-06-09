@@ -8,13 +8,17 @@
 #include "btree.h"
 #include "spfs.h"
 
-
 struct spfs_super_block {
   unsigned int version;
   unsigned int magic;
   unsigned int block_size;
 
+  unsigned int id;
+  struct mutex id_lock;
+
   struct spfs_btree tree;
+
+  bool dirty; // TODO?
 };
 
 #endif
