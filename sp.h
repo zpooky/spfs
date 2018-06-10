@@ -23,6 +23,7 @@ struct spfs_super_block {
 
 struct spfs_priv_inode {
   struct mutex lock;
+  spfs_offset start;
 };
 
 #endif

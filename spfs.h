@@ -7,6 +7,8 @@
 
 #define SPFS_ROOT_INODE_NO 1
 
+typedef unsigned int spfs_offset;
+
 struct spfs_super_block_wire {
   unsigned int version;
   unsigned int magic;
@@ -18,7 +20,7 @@ struct spfs_super_block_wire {
 };
 
 struct spfs_inode {
-  unsigned long inode_no;
+  unsigned long id;
 
   unsigned int atime;
   unsigned int mtime;
@@ -27,23 +29,6 @@ struct spfs_inode {
   mode_t mode;
 
   char name[SPOOKY_FS_NAME_MAX];
-};
-
-struct spfs_child_list {
-  unsigned long inos[64];
-  size_t length;
-
-  struct spfs_child_list *next;
-};
-
-struct spfs_block_header {
-  // TODO
-  struct spfs_block_header *next;
-};
-
-enum spfs_entry_kind {
-  spfs_entry_kind_DIRECTORY,
-  spfs_entry_kind_FILE,
 };
 
 #define spfs_entry_kind_file 1
@@ -55,8 +40,8 @@ struct spfs_entry {
   // TAG either file or dir
   int kind;
   union {
-    unsigned int children;
-    struct spfs_block_header *file;
+    spfs_offset children;
+    spfs_offset files;
   };
 };
 

@@ -26,13 +26,22 @@ static const struct file_operations spfs_dir_ops;
 
 //=====================================
 static int
-spfs_convert_dentry(struct spfs_entry *dest, struct inode *source,
-                    umode_t mode) {
+spfs_convert_inode(struct spfs_entry *dest, struct inode *src, umode_t mode) {
   BUG_ON(!dest);
-  BUG_ON(!source);
+  BUG_ON(!src);
 
+  // TODO copy name
   dest->inode.mode = mode;
-  dest->inode.inode_no = source->i_ino;
+  dest->inode.id = src->i_ino;
+  if (S_ISDIR(mode)) {
+    dest->kind = spfs_entry_kind_dir;
+    dest->children = 0;
+  } else if (S_ISREG(mode)) {
+    dest->kind = spfs_entry_kind_file;
+    dest->files = 0;
+  } else {
+    BUG();
+  }
 
   // TODO stuff
   return 0;
@@ -90,6 +99,7 @@ spfs_generic_create(struct inode *parent, struct dentry *den_subject,
                     umode_t mode) {
   struct super_block *sb;
   struct spfs_super_block *sbi;
+
   struct spfs_entry subject_entry;
   struct spfs_entry *res;
 
@@ -109,7 +119,7 @@ spfs_generic_create(struct inode *parent, struct dentry *den_subject,
     return -ENOSPC;
   }
 
-  if (!spfs_convert_dentry(&subject_entry, subject, mode)) {
+  if (!spfs_convert_inode(/*dest*/ &subject_entry, subject, mode)) {
     return -ENOMEM;
   }
 
@@ -194,6 +204,28 @@ static const struct inode_operations spfs_inode_ops = {
 };
 
 //=====================================
+#define MIN(f, s) (f) > (s) ? (s) : (f)
+
+static unsigned int
+spfs_sb_remaining(struct buffer_head *bh, unsigned int pos) {
+  BUG_ON(pos > bh->b_size);
+  return bh->b_size - pos;
+}
+
+static bool
+spfs_sb_read_u32(struct buffer_head *bh, unsigned int *pos, unsigned int *out) {
+  if (spfs_sb_remaining(bh, *pos) < sizeof(*out)) {
+    return false;
+  }
+
+  memcpy(out, bh->b_data + *pos, sizeof(*out));
+  *out = be32_to_cpu(*out);
+
+  *pos += sizeof(*out);
+
+  return true;
+}
+
 /*
  * Used to retrieve data from the device.
  * A non-negative return value represents the number of bytes successfully read.
@@ -204,10 +236,15 @@ spfs_read(struct file *file, char __user *buf, size_t len, loff_t *ppos) {
   struct spfs_priv_inode *priv_inode;
   struct super_block *sb;
   struct spfs_super_block *sbi;
-  struct spfs_entry *entry;
+  loff_t pos = *ppos;
+  ssize_t read = 0;
 
   if (!ppos) {
     return -EINVAL;
+  }
+
+  if (len == 0) {
+    return 0;
   }
 
   BUG_ON(!file);
@@ -227,18 +264,64 @@ spfs_read(struct file *file, char __user *buf, size_t len, loff_t *ppos) {
   BUG_ON(!sbi);
 
   {
-    mutex_lock(&sbi->tree.lock);
-    entry = spfs_btree_lookup(&sbi->tree, inode->i_ino);
-    mutex_unlock(&sbi->tree.lock);
-  }
-
-  if (entry) {
+    spfs_offset start;
     mutex_lock(&priv_inode->lock);
+    /* {
+     *   mutex_lock(&sbi->tree.lock);
+     *   entry = spfs_btree_lookup(&sbi->tree, inode->i_ino);
+     *   mutex_unlock(&sbi->tree.lock);
+     * }
+     */
+    start = priv_inode->start;
+  Lit:
+    if (start) {
+      unsigned int con;
+      spfs_offset next;
+      unsigned int cap;
+      unsigned int length;
+      struct buffer_head *bh;
+      unsigned int bh_pos = 0;
 
-    // TODO
+      /*
+       * [next:u32,cap:u32,length:u32,raw:cap]
+       */
+      bh = sb_bread(sb, start);
+      if (!spfs_sb_read_u32(bh, &bh_pos, &next)) {
+        return -EINVAL;
+      }
+      if (!spfs_sb_read_u32(bh, &bh_pos, &cap)) {
+        return -EINVAL;
+      }
+      if (!spfs_sb_read_u32(bh, &bh_pos, &length)) {
+        return -EINVAL;
+      }
 
+      if (length != cap) {
+        BUG_ON(next);
+      }
+
+      con = MIN(pos, spfs_sb_remaining(bh, bh_pos));
+      bh_pos += con;
+      pos += con;
+
+      if (bh_pos < bh->b_size) {
+        con = MIN(len, spfs_sb_remaining(bh, bh_pos));
+        memcpy(/*dest*/ buf, /*src*/ bh->b_data + bh_pos, con);
+        bh_pos += con;
+        buf += con;
+        len -= con;
+      }
+
+      brelse(bh);
+
+      if (len > 0) {
+        start = next;
+        goto Lit;
+      }
+    }
     mutex_unlock(&priv_inode->lock);
-    return 0;
+
+    *ppos += read; // TODO ?
   }
 
   return -EINVAL;
@@ -262,13 +345,6 @@ static const struct file_operations spfs_file_ops = {
     /**/
 };
 //=====================================
-static bool
-spfs_sb_read_u32(struct buffer_head *bh, unsigned int *out) {
-  // TODO
-  *out = 0;
-  return true;
-}
-
 static int
 spfs_iterate(struct file *file, struct dir_context *ctx) {
   struct super_block *sb;
@@ -279,6 +355,7 @@ spfs_iterate(struct file *file, struct dir_context *ctx) {
 
   inode = file_inode(file);
   if (ctx->pos >= inode->i_size) {
+    // TODO rentrant pos howdoes it work?
     return 0;
   }
 
@@ -293,7 +370,7 @@ spfs_iterate(struct file *file, struct dir_context *ctx) {
 
   {
     unsigned int children_total;
-    unsigned int sub_list;
+    spfs_offset child_list;
 
     mutex_lock(&priv_inode->lock);
     {
@@ -306,7 +383,7 @@ spfs_iterate(struct file *file, struct dir_context *ctx) {
         return -ENOMEM; //
       }
 
-      sub_list = res->children;
+      child_list = res->children;
 
       BUG_ON(!S_ISDIR(inode->i_mode));
       BUG_ON(res->kind != spfs_entry_kind_dir);
@@ -316,48 +393,62 @@ spfs_iterate(struct file *file, struct dir_context *ctx) {
 
     children_total = 0;
   Lit:
-    if (sub_list) {
+    if (child_list) {
       /*
        * [next:u32,children:u32,ino:u32...]:4096
        */
       unsigned int current_inode;
-      unsigned int next;
+      spfs_offset next;
       unsigned int children;
       unsigned int i;
       struct buffer_head *bh;
+      unsigned int bh_pos = 0;
 
-      bh = sb_bread(sb, sub_list);
+      bh = sb_bread(sb, child_list);
       BUG_ON(!bh);
-      if (!spfs_sb_read_u32(bh, &next)) {
+      if (!spfs_sb_read_u32(bh, &bh_pos, &next)) {
+        mutex_unlock(&priv_inode->lock);
         return -ENOMEM; // TODO
       }
-      if (!spfs_sb_read_u32(bh, &children)) {
+      if (!spfs_sb_read_u32(bh, &bh_pos, &children)) {
+        mutex_unlock(&priv_inode->lock);
         return -ENOMEM; // TODO
       }
       // TODO assert children < max
 
       i = 0;
       while (i < children) {
-        if (!spfs_sb_read_u32(bh, &current_inode)) {
+        if (!spfs_sb_read_u32(bh, &bh_pos, &current_inode)) {
+          mutex_unlock(&priv_inode->lock);
           return -ENOMEM; // TODO
         }
         if (current_inode) {
+          struct spfs_entry *current_res;
+
+          mutex_lock(&sbi->tree.lock);
+          current_res = spfs_btree_lookup(&sbi->tree, inode->i_ino);
+          mutex_unlock(&sbi->tree.lock);
+
+          if (current_res) {
+            dir_emit(ctx, current_res->inode.name,
+                     sizeof(current_res->inode.name), current_res->inode.id,
+                     DT_UNKNOWN);
+
+            ++ctx->pos;
+          }
+
           ++i;
         }
       }
 
       brelse(bh);
 
-      sub_list = next;
+      child_list = next;
       goto Lit;
     }
 
     mutex_unlock(&priv_inode->lock);
   }
-
-  /* dir_emit(ctx, "spooky", SPOOKY_FS_NAME_MAX, 2, DT_UNKNOWN); */
-
-  /* ctx->pos = inode->i_size + 1; */
 
   return 0;
 }
