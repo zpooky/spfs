@@ -719,10 +719,68 @@ spfs_entry_cmp(const struct spfs_entry *f, const struct spfs_entry *s) {
 }
 
 static int
-spfs_init_free_list(struct spfs_free_list *list, spfs_offset head) {
+spfs_init_free_list(struct super_block *sb, struct spfs_free_list *list,
+                    spfs_offset head) {
   mutex_init(&list->lock);
   list->root = NULL;
   list->length = 0;
+
+Lit:
+  if (head) {
+    unsigned int i = 0;
+    struct buffer_head *bh;
+    unsigned int bh_pos = 0;
+
+    unsigned int free_length;
+    spfs_offset free_next;
+
+    bh = sb_bread(sb, head);
+    BUG_ON(!bh);
+
+    /* entry[spfs_offset,size_t]
+     * free_list[length:u32,next:spfs_offset,entry:length]
+     */
+
+    if (!spfs_sb_read_u32(bh, &bh_pos, &free_length)) {
+      return -EINVAL;
+    }
+    if (!spfs_sb_read_u32(bh, &bh_pos, &free_next)) {
+      return -EINVAL;
+    }
+
+    for (i = 0; i < free_length; ++i) {
+      struct spfs_free_node *node_next = list->root;
+      struct spfs_free_node *node;
+      spfs_offset entry_start;
+      unsigned int entry_length;
+
+      if (!spfs_sb_read_u32(bh, &bh_pos, &entry_start)) {
+        // TODO bh release
+        return -EINVAL;
+      }
+      if (!spfs_sb_read_u32(bh, &bh_pos, &entry_length)) {
+        // TODO bh release
+        return -EINVAL;
+      }
+
+      node = kzalloc(sizeof(*node), GFP_KERNEL);
+      if (!node) {
+        // TODO bh release
+        return -ENOMEM;
+      }
+      node->next = node_next;
+      node->start = entry_start;
+      node->length = entry_length;
+
+      list->root = node;
+      list->length += entry_length;
+    }
+
+    brelse(bh);
+    head = free_next;
+    goto Lit;
+  }
+
   return 0;
 }
 
@@ -730,6 +788,7 @@ static int
 spfs_init_super_block(struct super_block *sb, struct spfs_super_block *super) {
   struct buffer_head *bh;
   sector_t offset;
+  spfs_offset start = 0;
 
   BUG_ON(!sb);
   BUG_ON(!super);
@@ -765,12 +824,17 @@ spfs_init_super_block(struct super_block *sb, struct spfs_super_block *super) {
     return -ENOMEM;
   }
 
-  if (!spfs_btree_init(sb, &super->tree, spfs_entry_cmp, /*TODO*/ 0)) {
-    return -ENOMEM;
-  }
+  {
+    spfs_offset btree_start = start + super->block_size;
+    spfs_offset free_start = btree_start = super->block_size;
 
-  if (!spfs_init_free_list(&super->free_list, /*TODO*/ 0)) {
-    return -ENOMEM;
+    if (!spfs_btree_init(sb, &super->tree, spfs_entry_cmp, btree_start)) {
+      return -ENOMEM;
+    }
+
+    if (!spfs_init_free_list(sb, &super->free_list, free_start)) {
+      return -ENOMEM;
+    }
   }
 
   return 0;
