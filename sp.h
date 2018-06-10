@@ -15,8 +15,9 @@ struct spfs_free_node {
 };
 
 struct spfs_free_list {
-  struct mutex lock;
-  struct spfs_free_node *next;
+  struct mutex lock;//TODO spin lock
+  size_t length;
+  struct spfs_free_node *root;
 };
 
 struct spfs_super_block {

@@ -250,10 +250,74 @@ spfs_sb_write_u32(struct buffer_head *bh, unsigned int *pos, unsigned int val) {
   return true;
 }
 
-static spfs_offset
-spfs_free_list_alloc(struct spfs_super_block *sbi, size_t len) {
+static size_t
+spfs_blocks_for(size_t block_size, size_t len) {
   // TODO
   return 0;
+}
+
+static spfs_offset
+spfs_free_file_alloc(struct super_block *sb, size_t len) {
+  // TODO support small return < len so that calller invokes f_file_alloc
+  // multiple time
+  struct spfs_super_block *sbi = sb->s_fs_info;
+  struct spfs_free_list *free_list;
+  const size_t block_size = sbi->block_size;
+  const size_t blocks = spfs_blocks_for(block_size, len);
+  const size_t alloc_len = blocks * block_size;
+  spfs_offset result = 0;
+
+  if (alloc_len == 0) {
+    return result;
+  }
+
+  free_list = &sbi->free_list;
+
+  {
+    struct spfs_free_node *list;
+    mutex_lock(&free_list->lock);
+    if (free_list->length > alloc_len) {
+      list = free_list->root;
+
+    Lit:
+      if (list) {
+        /* TODO handle 0 length node */
+        if (list->length >= alloc_len) {
+          list->length -= alloc_len;
+          result = list->start + list->length;
+        } else {
+          list = list->next;
+          goto Lit;
+        }
+      }
+    }
+    mutex_unlock(&free_list->lock);
+  }
+
+  if (result) {
+    unsigned int b_pos = 0;
+    struct buffer_head *bh;
+
+    bh = sb_bread(sb, result);
+    BUG_ON(!bh);
+
+    /* Make file header */
+    /* [next:u32,cap:u32,length:u32,raw:cap] */
+    if (!spfs_sb_write_u32(bh, &b_pos, 0)) {
+      BUG();
+    }
+    if (!spfs_sb_write_u32(bh, &b_pos, alloc_len)) {
+      BUG();
+    }
+    if (!spfs_sb_write_u32(bh, &b_pos, 0)) {
+      BUG();
+    }
+
+    mark_buffer_dirty(bh); // TODO maybe sync?
+    brelse(bh);
+  }
+
+  return result;
 }
 
 /*
@@ -297,12 +361,6 @@ spfs_read(struct file *file, char __user *buf, size_t len, loff_t *ppos) {
   {
     spfs_offset start;
     mutex_lock(&priv_inode->lock);
-    /* {
-     *   mutex_lock(&sbi->tree.lock);
-     *   entry = spfs_btree_lookup(&sbi->tree, inode->i_ino);
-     *   mutex_unlock(&sbi->tree.lock);
-     * }
-     */
     start = priv_inode->start;
   Lit:
     if (start) {
@@ -313,9 +371,7 @@ spfs_read(struct file *file, char __user *buf, size_t len, loff_t *ppos) {
       struct buffer_head *bh;
       unsigned int bh_pos = 0;
 
-      /*
-       * [next:u32,cap:u32,length:u32,raw:cap]
-       */
+      /* [next:u32,cap:u32,length:u32,raw:cap] */
       bh = sb_bread(sb, start);
       if (!spfs_sb_read_u32(bh, &bh_pos, &next)) {
         return -EINVAL;
@@ -476,7 +532,7 @@ spfs_write(struct file *file, const char *buf, size_t len, loff_t *ppos) {
           *ppos = file_length;
           pos = 0;
 
-          block_next = spfs_free_list_alloc(sbi, len);
+          block_next = spfs_free_file_alloc(sb, len);
           if (!block_next) {
             // TODO release
             return -EINVAL;
@@ -501,7 +557,7 @@ spfs_write(struct file *file, const char *buf, size_t len, loff_t *ppos) {
     } else {
       struct spfs_entry *res;
 
-      start = spfs_free_list_alloc(sbi, len);
+      start = spfs_free_file_alloc(sb, len);
       if (!start) {
         // TODO release
         return -EINVAL;
@@ -665,7 +721,8 @@ spfs_entry_cmp(const struct spfs_entry *f, const struct spfs_entry *s) {
 static int
 spfs_init_free_list(struct spfs_free_list *list, spfs_offset head) {
   mutex_init(&list->lock);
-  list->next = NULL;
+  list->root = NULL;
+  list->length = 0;
   return 0;
 }
 

@@ -59,6 +59,8 @@ super_block(int fd) {
 
 static int
 mkfs_write_u32(unsigned char *buffer, ssize_t *pos, unsigned int value) {
+  value = htonl(value);
+
   memcpy(buffer + *pos, &value, sizeof(value));
   *pos += sizeof(value);
 
@@ -85,6 +87,7 @@ free_list(int fd) {
     return 1;
   }
 
+  // TODO length should be even multiple of super.bloc_size
   size_t length = s.st_size - start;
   fprintf(stdout, "system block[%zu], fs block[%u]\n", s.st_blksize,
           SPOOKY_FS_BLOCK_SIZE);
