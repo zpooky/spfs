@@ -11,7 +11,8 @@
  * http://lkml.iu.edu/hypermail/linux/kernel/0105.2/1363.html
  */
 
-extern int
+//=====================================
+int
 spfs_btree_init(struct super_block *sb, struct spfs_btree *tree, btree_cmp cmp,
                 spfs_offset start) {
   /* struct address_space *mapping; */
@@ -35,25 +36,32 @@ spfs_btree_init(struct super_block *sb, struct spfs_btree *tree, btree_cmp cmp,
   return 0;
 }
 
-struct spfs_entry *
-spfs_btree_lookup(struct spfs_btree *tree, unsigned long ino) {
+//=====================================
+/* static  */
+
+bool
+spfs_btree_lookup(struct spfs_btree *tree, spfs_id ino,
+                  struct spfs_entry *result) {
   BUG_ON(!tree);
 
   // TODO
   return NULL;
 }
 
+//=====================================
 // TODO have resulting dirty bnode stack
-struct spfs_entry *
+bool
 spfs_btree_insert(struct spfs_btree *tree, struct spfs_entry *in) {
   BUG_ON(!tree);
 
   // TODO
-  return NULL;
+  return true;
 }
 
-void
-spfs_btree_mark_dirty(struct spfs_btree *tree, struct spfs_entry *in) {
-  BUG_ON(!tree);
+//=====================================
+bool
+spfs_btree_modify(struct spfs_btree *tree, spfs_id ino, void *closure,
+                  btree_modify_cb cb) {
   // TODO
+  return true;
 }

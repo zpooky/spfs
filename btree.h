@@ -9,6 +9,8 @@
 
 typedef int (*btree_cmp)(const struct spfs_entry *, const struct spfs_entry *);
 
+typedef bool (*btree_modify_cb)(void *, struct spfs_entry *);
+
 // TODO this should be SP_FS_BLOCK_SIZE bytes
 struct spfs_bnode {
   struct spfs_entry entries[1024];
@@ -28,13 +30,14 @@ extern int
 spfs_btree_init(struct super_block *sb, struct spfs_btree *, btree_cmp,
                 spfs_offset);
 
-extern struct spfs_entry *
-spfs_btree_lookup(struct spfs_btree *, unsigned long ino);
+extern bool
+spfs_btree_lookup(struct spfs_btree *, spfs_id ino, struct spfs_entry *out);
 
-extern struct spfs_entry *
+extern bool
 spfs_btree_insert(struct spfs_btree *tree, struct spfs_entry *in);
 
-extern void
-spfs_btree_mark_dirty(struct spfs_btree *tree, struct spfs_entry *in);
+extern bool
+spfs_btree_modify(struct spfs_btree *tree, spfs_id ino, void *,
+                  btree_modify_cb);
 
 #endif

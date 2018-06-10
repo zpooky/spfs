@@ -8,17 +8,18 @@
 #define SPFS_ROOT_INODE_NO 1
 
 typedef unsigned int spfs_offset;
+typedef unsigned int spfs_id;
 
 struct spfs_super_block_wire {
   unsigned int version;
   unsigned int magic;
   unsigned int block_size;
   unsigned int id;
+  unsigned int root_id;
 
   // TODO spfs_super_block should occopy 4096 on disk but not in memory
   // char dummy[SPOOKY_FS_BLOCK_SIZE - (sizeof(unsigned int) * 2)];
 };
-
 
 struct spfs_inode {
   unsigned long id;

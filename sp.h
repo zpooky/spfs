@@ -15,7 +15,7 @@ struct spfs_free_node {
 };
 
 struct spfs_free_list {
-  struct mutex lock;//TODO spin lock
+  struct mutex lock; // TODO spin lock
   size_t length;
   struct spfs_free_node *root;
 };
@@ -25,8 +25,10 @@ struct spfs_super_block {
   unsigned int magic;
   unsigned int block_size;
 
-  unsigned int id;
+  spfs_id id;
   struct mutex id_lock; // TODO spin lock
+
+  spfs_id root_id;
 
   struct spfs_btree tree;
 

@@ -42,12 +42,15 @@ super_block(int fd) {
       .magic = SPOOKY_FS_MAGIC,
       .block_size = SPOOKY_FS_BLOCK_SIZE,
       .id = SPFS_ROOT_INODE_NO,
+      .root_id = SPFS_ROOT_INODE_NO,
   };
   zero_len = super.block_size - sizeof(super);
 
   super.version = htonl(super.version);
   super.magic = htonl(super.magic);
   super.block_size = htonl(super.block_size);
+  super.id = htonl(super.id);
+  super.root_id = htonl(super.root_id);
 
   ret = write(fd, &super, sizeof(super));
   if (ret != sizeof(super)) {
