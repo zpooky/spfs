@@ -19,6 +19,7 @@ struct spfs_super_block_wire {
   // char dummy[SPOOKY_FS_BLOCK_SIZE - (sizeof(unsigned int) * 2)];
 };
 
+
 struct spfs_inode {
   unsigned long id;
 

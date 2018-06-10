@@ -395,6 +395,7 @@ spfs_write(struct file *file, const char *buf, size_t len, loff_t *ppos) {
 
   {
     spfs_offset start;
+
     mutex_lock(&priv_inode->lock);
     start = priv_inode->start;
     /*
@@ -488,12 +489,27 @@ spfs_write(struct file *file, const char *buf, size_t len, loff_t *ppos) {
       start = block_next;
       goto Lit;
     } else {
+      struct spfs_entry *res;
+
       start = spfs_free_list_alloc(sbi, len);
       if (!start) {
         // TODO release
         return -EINVAL;
       }
-      // TODO update btree_node_entry
+
+      {
+        mutex_lock(&sbi->tree.lock);
+        res = spfs_btree_lookup(&sbi->tree, inode->i_ino);
+        if (!res) {
+          // TODO release
+          return 0;
+        }
+
+        BUG_ON(res->files != 0);
+        res->files = start;
+        spfs_btree_mark_dirty(&sbi->tree, res);
+        mutex_unlock(&sbi->tree.lock);
+      }
 
       priv_inode->start = start;
       goto Lit;
@@ -637,6 +653,13 @@ spfs_entry_cmp(const struct spfs_entry *f, const struct spfs_entry *s) {
 }
 
 static int
+spfs_init_free_list(struct spfs_free_list *list, spfs_offset head) {
+  mutex_init(&list->lock);
+  list->next = NULL;
+  return 0;
+}
+
+static int
 spfs_init_super_block(struct super_block *sb, struct spfs_super_block *super) {
   struct buffer_head *bh;
   sector_t offset;
@@ -675,7 +698,11 @@ spfs_init_super_block(struct super_block *sb, struct spfs_super_block *super) {
     return -ENOMEM;
   }
 
-  if (!spfs_btree_init(&super->tree, spfs_entry_cmp)) {
+  if (!spfs_btree_init(sb, &super->tree, spfs_entry_cmp, /*TODO*/ 0)) {
+    return -ENOMEM;
+  }
+
+  if (!spfs_init_free_list(&super->free_list, /*TODO*/ 0)) {
     return -ENOMEM;
   }
 

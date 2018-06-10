@@ -11,7 +11,8 @@
  */
 
 extern int
-spfs_btree_init(struct spfs_btree *tree, btree_cmp cmp) {
+spfs_btree_init(struct super_block *sb, struct spfs_btree *tree, btree_cmp cmp,
+                spfs_offset start) {
   /* struct address_space *mapping; */
   /* struct page *page; */
   /* unsigned int size; */
@@ -40,4 +41,9 @@ spfs_btree_insert(struct spfs_btree *tree, struct spfs_entry *in) {
 
   // TODO
   return NULL;
+}
+
+void
+spfs_btree_mark_dirty(struct spfs_btree *tree, struct spfs_entry *in) {
+  // TODO
 }

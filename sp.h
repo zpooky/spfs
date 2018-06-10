@@ -8,17 +8,28 @@
 #include "btree.h"
 #include "spfs.h"
 
+struct spfs_free_node {
+  spfs_offset start;
+  size_t length;
+  struct spfs_free_node *next;
+};
+
+struct spfs_free_list {
+  struct mutex lock;
+  struct spfs_free_node *next;
+};
+
 struct spfs_super_block {
   unsigned int version;
   unsigned int magic;
   unsigned int block_size;
 
   unsigned int id;
-  struct mutex id_lock;
+  struct mutex id_lock; // TODO spin lock
 
   struct spfs_btree tree;
 
-  bool dirty; // TODO?
+  struct spfs_free_list free_list;
 };
 
 struct spfs_priv_inode {
