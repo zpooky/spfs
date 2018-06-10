@@ -310,6 +310,8 @@ spfs_read(struct file *file, char __user *buf, size_t len, loff_t *ppos) {
         bh_pos += con;
         buf += con;
         len -= con;
+
+        read += con;
       }
 
       brelse(bh);
@@ -324,7 +326,7 @@ spfs_read(struct file *file, char __user *buf, size_t len, loff_t *ppos) {
     *ppos += read; // TODO ?
   }
 
-  return -EINVAL;
+  return read;
 }
 
 /*
