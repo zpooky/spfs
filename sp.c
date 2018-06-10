@@ -26,11 +26,18 @@ static const struct file_operations spfs_dir_ops;
 
 //=====================================
 static int
-spfs_convert_inode(struct spfs_entry *dest, struct inode *src, umode_t mode) {
+spfs_convert_inode(struct spfs_entry *dest, struct inode *src, const char *name,
+                   umode_t mode) {
+  size_t n_length = strlen(name);
+
   BUG_ON(!dest);
   BUG_ON(!src);
 
-  // TODO copy name
+  if (n_length > sizeof(dest->inode.name)) {
+    return 1;
+  }
+  strcpy(dest->inode.name, name);
+
   dest->inode.mode = mode;
   dest->inode.id = src->i_ino;
   if (S_ISDIR(mode)) {
@@ -99,6 +106,7 @@ spfs_generic_create(struct inode *parent, struct dentry *den_subject,
                     umode_t mode) {
   struct super_block *sb;
   struct spfs_super_block *sbi;
+  const char *name;
 
   struct spfs_entry subject_entry;
   struct spfs_entry *res;
@@ -119,7 +127,9 @@ spfs_generic_create(struct inode *parent, struct dentry *den_subject,
     return -ENOSPC;
   }
 
-  if (!spfs_convert_inode(/*dest*/ &subject_entry, subject, mode)) {
+  name = den_subject->d_name.name;
+
+  if (!spfs_convert_inode(/*dest*/ &subject_entry, subject, name, mode)) {
     return -ENOMEM;
   }
 
