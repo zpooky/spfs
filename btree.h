@@ -16,10 +16,12 @@ struct spfs_bnode {
 };
 
 struct spfs_btree {
-  struct spfs_bnode *root;
+  // struct spfs_bnode *root;
   btree_cmp cmp;
   struct mutex lock;
   size_t block_size;
+  spfs_offset start;
+  struct super_block *sb;
 };
 
 extern int

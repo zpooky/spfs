@@ -19,13 +19,17 @@ spfs_btree_init(struct super_block *sb, struct spfs_btree *tree, btree_cmp cmp,
   /* unsigned int size; */
 
   struct spfs_super_block *sbi;
-  sbi = sb->s_fs_info;
 
   BUG_ON(!tree);
+  BUG_ON(!sb);
 
-  tree->root = NULL;
+  sbi = sb->s_fs_info;
+
+  /* tree->root = NULL; */
   tree->cmp = cmp;
   tree->block_size = sbi->block_size;
+  tree->start = start;
+  tree->sb = sb;
   mutex_init(&tree->lock);
 
   return 0;
@@ -50,5 +54,6 @@ spfs_btree_insert(struct spfs_btree *tree, struct spfs_entry *in) {
 
 void
 spfs_btree_mark_dirty(struct spfs_btree *tree, struct spfs_entry *in) {
+  BUG_ON(!tree);
   // TODO
 }

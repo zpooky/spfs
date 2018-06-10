@@ -109,8 +109,6 @@ spfs_generic_create(struct inode *parent, struct dentry *den_subject,
   const char *name;
 
   struct spfs_entry subject_entry;
-  struct spfs_entry *res;
-
   struct inode *subject;
 
   BUG_ON(!parent);
@@ -129,20 +127,20 @@ spfs_generic_create(struct inode *parent, struct dentry *den_subject,
 
   name = den_subject->d_name.name;
 
+  den_subject->d_inode = subject; // TODO sp??
+
   if (!spfs_convert_inode(/*dest*/ &subject_entry, subject, name, mode)) {
+    // TODO cleanup
     return -ENOMEM;
   }
 
   if (mutex_lock_interruptible(&sbi->tree.lock)) {
-    mutex_unlock(&sbi->tree.lock);
+    // TODO cleanup
     return -EINTR;
   }
 
-  res = spfs_btree_insert(&sbi->tree, &subject_entry);
+  spfs_btree_insert(&sbi->tree, &subject_entry);
   mutex_unlock(&sbi->tree.lock);
-  if (!res) {
-    return -EINTR;
-  }
 
   return 0;
 }
