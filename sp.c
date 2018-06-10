@@ -226,6 +226,26 @@ spfs_sb_read_u32(struct buffer_head *bh, unsigned int *pos, unsigned int *out) {
   return true;
 }
 
+static bool
+spfs_sb_write_u32(struct buffer_head *bh, unsigned int *pos, unsigned int val) {
+  if (spfs_sb_remaining(bh, *pos) < sizeof(val)) {
+    return false;
+  }
+
+  val = cpu_to_be32(val);
+  memcpy(/*dest*/ bh->b_data + *pos, /*src*/ &val, sizeof(val));
+
+  *pos += sizeof(val);
+
+  return true;
+}
+
+static spfs_offset
+spfs_free_list_alloc(struct spfs_super_block *sbi, size_t len) {
+  // TODO
+  return 0;
+}
+
 /*
  * Used to retrieve data from the device.
  * A non-negative return value represents the number of bytes successfully read.
@@ -278,7 +298,7 @@ spfs_read(struct file *file, char __user *buf, size_t len, loff_t *ppos) {
     if (start) {
       unsigned int con;
       spfs_offset next;
-      unsigned int cap;
+      unsigned int capacity;
       unsigned int length;
       struct buffer_head *bh;
       unsigned int bh_pos = 0;
@@ -290,14 +310,14 @@ spfs_read(struct file *file, char __user *buf, size_t len, loff_t *ppos) {
       if (!spfs_sb_read_u32(bh, &bh_pos, &next)) {
         return -EINVAL;
       }
-      if (!spfs_sb_read_u32(bh, &bh_pos, &cap)) {
+      if (!spfs_sb_read_u32(bh, &bh_pos, &capacity)) {
         return -EINVAL;
       }
       if (!spfs_sb_read_u32(bh, &bh_pos, &length)) {
         return -EINVAL;
       }
 
-      if (length != cap) {
+      if (length != capacity) {
         BUG_ON(next);
       }
 
@@ -334,6 +354,9 @@ spfs_read(struct file *file, char __user *buf, size_t len, loff_t *ppos) {
  * Sends data to the device. If missing, -EINVAL is returned to the program
  * calling the write system call. The return value, if non-negative, represents
  * the number of bytes successfully written.
+
+ * On a regular file, if this incremented file offset is greater than the length
+ * of the file, the length of the file shall be set to this file offset.
  */
 static ssize_t
 spfs_write(struct file *file, const char *buf, size_t len, loff_t *ppos) {
@@ -341,6 +364,7 @@ spfs_write(struct file *file, const char *buf, size_t len, loff_t *ppos) {
   struct spfs_priv_inode *priv_inode;
   struct super_block *sb;
   struct spfs_super_block *sbi;
+  unsigned long file_length = 0;
 
   loff_t pos = *ppos;
   ssize_t written = 0;
@@ -370,10 +394,113 @@ spfs_write(struct file *file, const char *buf, size_t len, loff_t *ppos) {
   BUG_ON(!sbi);
 
   {
+    spfs_offset start;
     mutex_lock(&priv_inode->lock);
-    // TODO
+    start = priv_inode->start;
+    /*
+     * [next:u32,cap:u32,length:u32,raw:cap]
+     */
+  Lit:
+    if (start) {
+      spfs_offset block_next;
+      spfs_offset block_next_idx;
+      unsigned int block_capacity;
+      unsigned int block_length;
+      spfs_offset block_length_idx;
+
+      bool block_dirty = false;
+
+      struct buffer_head *bh;
+      unsigned int bh_pos = 0;
+      unsigned int con;
+
+      bh = sb_bread(sb, start);
+      BUG_ON(!bh);
+      block_next_idx = bh_pos;
+      if (!spfs_sb_read_u32(bh, &bh_pos, &block_next)) {
+        // TODO release
+        return -EINVAL;
+      }
+      if (!spfs_sb_read_u32(bh, &bh_pos, &block_capacity)) {
+        // TODO release
+        return -EINVAL;
+      }
+      block_length_idx = bh_pos;
+      if (!spfs_sb_read_u32(bh, &bh_pos, &block_length)) {
+        // TODO release
+        return -EINVAL;
+      }
+
+      if (block_length != block_capacity) {
+        BUG_ON(block_next);
+      }
+
+      con = MIN(pos, spfs_sb_remaining(bh, bh_pos));
+      pos -= con;
+      bh_pos += con;
+      if (pos == 0) {
+        con = MIN(len, spfs_sb_remaining(bh, bh_pos));
+
+        if (con > 0) {
+          memcpy(/*dest*/ bh->b_data + bh_pos, /*src*/ buf, con);
+          buf += con;
+          len -= con;
+          bh_pos += con;
+          block_length += con;
+
+          if (!spfs_sb_write_u32(bh, &bh_pos, block_length)) {
+            // TODO release
+            return -EINVAL;
+          }
+
+          block_dirty = true;
+        }
+      }
+      file_length += block_length;
+
+      if (len > 0) {
+        BUG_ON(block_length != block_capacity);
+
+        if (block_next == 0) {
+          *ppos = file_length;
+          pos = 0;
+
+          block_next = spfs_free_list_alloc(sbi, len);
+          if (!block_next) {
+            // TODO release
+            return -EINVAL;
+          }
+
+          if (!spfs_sb_write_u32(bh, &block_next_idx, block_next)) {
+            // TODO release
+            return -EINVAL;
+          }
+          block_dirty = true;
+        }
+      }
+
+      if (block_dirty) {
+        mark_buffer_dirty(bh);
+        sync_dirty_buffer(bh);
+      }
+      brelse(bh);
+
+      start = block_next;
+      goto Lit;
+    } else {
+      start = spfs_free_list_alloc(sbi, len);
+      if (!start) {
+        // TODO release
+        return -EINVAL;
+      }
+      // TODO update btree_node_entry
+
+      priv_inode->start = start;
+      goto Lit;
+    }
 
     mutex_unlock(&priv_inode->lock);
+    *ppos += written;
   }
 
   return 0;
