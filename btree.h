@@ -19,6 +19,7 @@ struct spfs_btree {
   struct spfs_bnode *root;
   btree_cmp cmp;
   struct mutex lock;
+  size_t block_size;
 };
 
 extern int

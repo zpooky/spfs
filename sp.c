@@ -284,6 +284,8 @@ spfs_free_file_alloc(struct super_block *sb, size_t len) {
         /* TODO handle 0 length node */
         if (list->length >= alloc_len) {
           list->length -= alloc_len;
+          free_list->length -= alloc_len;
+
           result = list->start + list->length;
         } else {
           list = list->next;
@@ -864,13 +866,14 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
     return -ENOMEM;
   }
 
+  /* Filesystem private info */
+  sb->s_fs_info = sbi;
+
   if (!spfs_init_super_block(sb, sbi)) {
     kfree(sbi);
     return -EIO; // TODO lookup error codes
   }
 
-  /* Filesystem private info */
-  sb->s_fs_info = sbi;
   /*  */
   sb->s_flags |= MS_NODIRATIME;
   /* TODO document why we do this */

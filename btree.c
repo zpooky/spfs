@@ -1,4 +1,5 @@
 #include "btree.h"
+#include "sp.h"
 
 /* #include <linux/slab.h> #<{(| kzalloc, ... |)}># */
 
@@ -17,10 +18,14 @@ spfs_btree_init(struct super_block *sb, struct spfs_btree *tree, btree_cmp cmp,
   /* struct page *page; */
   /* unsigned int size; */
 
+  struct spfs_super_block *sbi;
+  sbi = sb->s_fs_info;
+
   BUG_ON(!tree);
 
   tree->root = NULL;
   tree->cmp = cmp;
+  tree->block_size = sbi->block_size;
   mutex_init(&tree->lock);
 
   return 0;
