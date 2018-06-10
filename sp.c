@@ -236,6 +236,7 @@ spfs_read(struct file *file, char __user *buf, size_t len, loff_t *ppos) {
   struct spfs_priv_inode *priv_inode;
   struct super_block *sb;
   struct spfs_super_block *sbi;
+
   loff_t pos = *ppos;
   ssize_t read = 0;
 
@@ -335,8 +336,46 @@ spfs_read(struct file *file, char __user *buf, size_t len, loff_t *ppos) {
  * the number of bytes successfully written.
  */
 static ssize_t
-spfs_write(struct file *file, const char *buf, size_t len, loff_t *pos) {
-  // TODO
+spfs_write(struct file *file, const char *buf, size_t len, loff_t *ppos) {
+  struct inode *inode;
+  struct spfs_priv_inode *priv_inode;
+  struct super_block *sb;
+  struct spfs_super_block *sbi;
+
+  loff_t pos = *ppos;
+  ssize_t written = 0;
+
+  if (!ppos) {
+    return -EINVAL;
+  }
+
+  if (len == 0) {
+    return 0;
+  }
+
+  BUG_ON(!file);
+
+  inode = file->f_inode;
+  BUG_ON(!inode);
+
+  BUG_ON(!S_ISREG(inode->i_mode));
+
+  priv_inode = inode->i_private;
+  BUG_ON(!priv_inode);
+
+  sb = inode->i_sb;
+  BUG_ON(!sb);
+
+  sbi = sb->s_fs_info;
+  BUG_ON(!sbi);
+
+  {
+    mutex_lock(&priv_inode->lock);
+    // TODO
+
+    mutex_unlock(&priv_inode->lock);
+  }
+
   return 0;
 }
 
