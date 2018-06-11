@@ -197,6 +197,7 @@ spfs_new_inode(struct super_block *sb, umode_t mode) {
 static int
 spfs_generic_create(struct inode *parent, struct dentry *den_subject,
                     umode_t mode) {
+  int ret;
   struct super_block *sb;
   struct spfs_super_block *sbi;
   const char *name;
@@ -225,9 +226,10 @@ spfs_generic_create(struct inode *parent, struct dentry *den_subject,
   d_add(den_subject, subject);
   BUG_ON(den_subject->d_inode != subject); // TODO ?
 
-  if (!spfs_convert_from_inode(/*dest*/ &subject_entry, subject, name, mode)) {
+  ret = spfs_convert_from_inode(/*dest*/ &subject_entry, subject, name, mode);
+  if (ret) {
     // TODO cleanup
-    return -ENOMEM;
+    return ret;
   }
 
   if (mutex_lock_interruptible(&sbi->tree.lock)) {
@@ -496,7 +498,6 @@ spfs_lookup(struct inode *parent, struct dentry *child, unsigned int flags) {
   BUG_ON(!sb);
 
   result = spfs_find_inode_name(sb, parent, child);
-
   if (result) {
     /* inode_init_owner(inode, parent, ); */
     d_add(child, result);
@@ -932,7 +933,10 @@ Lit:
     spfs_offset free_next;
 
     bh = sb_bread(sb, head);
-    BUG_ON(!bh);
+    if (!bh) {
+      printk(KERN_INFO "NULL = sb_bread(sb, head[%u])\n", head);
+      return 1;
+    }
 
     /* entry[spfs_offset,size_t]
      * free_list[length:u32,next:spfs_offset,entry:length]
@@ -993,10 +997,13 @@ spfs_init_super_block(struct super_block *sb, struct spfs_super_block *super) {
   offset = 0;
   bh = sb_bread(sb, offset);
   if (!bh) {
+    printk(KERN_INFO "bh = sb_bread(sb, offset[%zu])\n", offset);
     return -EIO;
   }
 
   if (bh->b_size < sizeof(*super)) {
+    printk(KERN_INFO "bh->b_size:%zu < sizeof(*super):%zu\n", //
+           bh->b_size, sizeof(*super));
     brelse(bh);
     return -EIO;
   }
@@ -1015,23 +1022,31 @@ spfs_init_super_block(struct super_block *sb, struct spfs_super_block *super) {
   }
 
   if (super->magic != SPOOKY_FS_MAGIC) {
+    printk(KERN_INFO "super->magic[%u] != SPOOKY_FS_MAGIC[%u]\n", //
+           super->magic, SPOOKY_FS_MAGIC);
     return -ENOMEM;
   }
 
   if (super->block_size != SPOOKY_FS_BLOCK_SIZE) {
+    printk(KERN_INFO "super->block_size:%u != SPOOKY_FS_BLOCK_SIZE:%u\n", //
+           super->block_size, SPOOKY_FS_BLOCK_SIZE);
     return -ENOMEM;
   }
 
   {
+    int res;
     spfs_offset btree_start = start + super->block_size;
     spfs_offset free_start = btree_start = super->block_size;
 
-    if (!spfs_btree_init(sb, &super->tree, spfs_entry_cmp, btree_start)) {
-      return -ENOMEM;
+    res = spfs_btree_init(sb, &super->tree, spfs_entry_cmp, btree_start);
+    if (res) {
+      return res;
     }
 
-    if (!spfs_init_free_list(sb, &super->free_list, free_start)) {
-      return -ENOMEM;
+    res = spfs_init_free_list(sb, &super->free_list, free_start);
+    if (res) {
+      printk(KERN_INFO "spfs_init_free_list()\n");
+      return res;
     }
   }
 
@@ -1055,6 +1070,7 @@ static int
 spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
   struct inode *root;
   struct spfs_super_block *sbi;
+  int res;
 
   sbi = kzalloc(sizeof(*sbi), GFP_KERNEL);
   if (!sbi) {
@@ -1064,9 +1080,11 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
   /* Filesystem private info */
   sb->s_fs_info = sbi;
 
-  if (!spfs_init_super_block(sb, sbi)) {
-    kfree(sbi);
-    return -EIO; // TODO lookup error codes
+  res = spfs_init_super_block(sb, sbi);
+  if (res) {
+    kfree(sb->s_fs_info);
+    sb->s_fs_info = NULL;
+    return res;
   }
 
   /*  */
@@ -1098,6 +1116,7 @@ spfs_mount(struct file_system_type *fs_type, int flags, const char *dev_name,
 static void
 spfs_kill_superblock(struct super_block *sb) {
   struct spfs_super_block *sbi;
+
   sbi = sb->s_fs_info;
   if (sbi) {
     kfree(sbi);
