@@ -14,15 +14,15 @@ struct spfs_super_block_wire {
   unsigned int version;
   unsigned int magic;
   unsigned int block_size;
-  unsigned int id;
-  unsigned int root_id;
+  spfs_id id;
+  spfs_id root_id;
 
   // TODO spfs_super_block should occopy 4096 on disk but not in memory
   // char dummy[SPOOKY_FS_BLOCK_SIZE - (sizeof(unsigned int) * 2)];
 };
 
 struct spfs_inode {
-  unsigned long id;
+  spfs_id id;
 
   unsigned int atime;
   unsigned int mtime;
@@ -38,6 +38,7 @@ struct spfs_inode {
 
 struct spfs_entry {
   struct spfs_inode inode;
+  struct spfs_entry *next;
 
   // TAG either file or dir
   int kind;

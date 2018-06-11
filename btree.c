@@ -1,7 +1,7 @@
 #include "btree.h"
 #include "sp.h"
 
-/* #include <linux/slab.h> #<{(| kzalloc, ... |)}># */
+#include <linux/slab.h> /* kzalloc, ... */
 
 /*
  * i_data is "pages read/written by this inode"
@@ -26,12 +26,12 @@ spfs_btree_init(struct super_block *sb, struct spfs_btree *tree, btree_cmp cmp,
 
   sbi = sb->s_fs_info;
 
-  /* tree->root = NULL; */
   tree->cmp = cmp;
+  mutex_init(&tree->lock);
   tree->block_size = sbi->block_size;
   tree->start = start;
   tree->sb = sb;
-  mutex_init(&tree->lock);
+  tree->dummy = NULL;
 
   return 0;
 }
@@ -39,29 +39,67 @@ spfs_btree_init(struct super_block *sb, struct spfs_btree *tree, btree_cmp cmp,
 //=====================================
 /* static  */
 
+static struct spfs_entry *
+btree_get_node(struct spfs_btree *tree, spfs_id ino) {
+  struct spfs_entry *head;
+  BUG_ON(!tree);
+
+  head = tree->dummy;
+Lit:
+  if (head) {
+    if (head->inode.id == ino) {
+      return head;
+    }
+
+    head = head->next;
+    goto Lit;
+  }
+
+  return NULL;
+}
+
 bool
 spfs_btree_lookup(struct spfs_btree *tree, spfs_id ino,
                   struct spfs_entry *result) {
-  BUG_ON(!tree);
+  struct spfs_entry *res = btree_get_node(tree, ino);
+  if (res) {
+    memcpy(result, res, sizeof(*res));
+  }
 
-  // TODO
-  return NULL;
+  return result != NULL;
 }
 
 //=====================================
 // TODO have resulting dirty bnode stack
 bool
 spfs_btree_insert(struct spfs_btree *tree, struct spfs_entry *in) {
+  struct spfs_entry *node;
+  struct spfs_entry *next;
   BUG_ON(!tree);
+  BUG_ON(!in);
 
-  // TODO
-  return true;
+  BUG_ON(spfs_btree_lookup(tree, in->inode.id, NULL));
+
+  next = tree->dummy;
+  node = kzalloc(sizeof(*node), GFP_KERNEL);
+  if (node) {
+    memcpy(node, in, sizeof(*node));
+    tree->dummy = node;
+    node->next = next;
+    return true;
+  }
+
+  return false;
 }
 
 //=====================================
 bool
 spfs_btree_modify(struct spfs_btree *tree, spfs_id ino, void *closure,
                   btree_modify_cb cb) {
-  // TODO
-  return true;
+  struct spfs_entry *res = btree_get_node(tree, ino);
+  if (res) {
+    cb(closure, res);
+  }
+
+  return res != NULL;
 }

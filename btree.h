@@ -9,7 +9,7 @@
 
 typedef int (*btree_cmp)(const struct spfs_entry *, const struct spfs_entry *);
 
-typedef bool (*btree_modify_cb)(void *, struct spfs_entry *);
+typedef void (*btree_modify_cb)(void *, struct spfs_entry *);
 
 // TODO this should be SP_FS_BLOCK_SIZE bytes
 struct spfs_bnode {
@@ -18,12 +18,13 @@ struct spfs_bnode {
 };
 
 struct spfs_btree {
-  // struct spfs_bnode *root;
   btree_cmp cmp;
   struct mutex lock;
   size_t block_size;
   spfs_offset start;
   struct super_block *sb;
+
+  struct spfs_entry *dummy;
 };
 
 extern int

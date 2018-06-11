@@ -57,3 +57,5 @@ GTAGS
 compile_commands.json
 mkfs.spfs
 *.mk
+test/fs_raw
+.gdb_breakpoints

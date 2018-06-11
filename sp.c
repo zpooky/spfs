@@ -51,6 +51,8 @@ spfs_convert_from_inode(struct spfs_entry *dest, struct inode *src,
     BUG();
   }
 
+  dest->next = NULL;
+
   return 0;
 }
 
@@ -60,7 +62,6 @@ spfs_priv_inode_init(struct inode *in, spfs_offset start) {
 
   result = kzalloc(sizeof(*result), GFP_KERNEL);
   if (!result) {
-    // TODO gc
     return NULL;
   }
 
@@ -72,12 +73,13 @@ spfs_priv_inode_init(struct inode *in, spfs_offset start) {
 
   // TODO add callback when inode gets destroyed to cleanup i_private
   in->i_private = result;
+
   return result;
 }
 
 static struct inode *
-spfs_convert_to_indode(struct super_block *sb, const struct spfs_entry *src,
-                       struct dentry *d) {
+spfs_convert_to_inode(struct super_block *sb, const struct spfs_entry *src,
+                      struct dentry *d) {
   struct inode *inode;
   umode_t mode = src->inode.mode;
   spfs_offset off_start = 0;
@@ -98,6 +100,7 @@ spfs_convert_to_indode(struct super_block *sb, const struct spfs_entry *src,
       off_start = src->file_start;
 
     } else {
+      printk(KERN_INFO "BUG(), mode[%u], name[%s]", mode, src->inode.name);
       BUG();
     }
 
@@ -140,7 +143,7 @@ spfs_get_inode(struct super_block *sb, struct dentry *d, spfs_id ino) {
   }
 
   if (res) {
-    return spfs_convert_to_indode(sb, &entry, d);
+    return spfs_convert_to_inode(sb, &entry, d);
   }
 
   return NULL;
@@ -430,7 +433,7 @@ spfs_find_inode_name_cb(void *closure, struct spfs_entry *cur) {
 
   if (strcmp(cur->inode.name, data->name) == 0) {
     /* data->result = TODO*/
-    data->result = spfs_convert_to_indode(data->sb, cur, data->dentry);
+    data->result = spfs_convert_to_inode(data->sb, cur, data->dentry);
     return false;
   }
 
@@ -682,15 +685,13 @@ spfs_read(struct file *file, char __user *buf, size_t len, loff_t *ppos) {
 }
 
 //=====================================
-static bool
+static void
 spfs_modify_start_cb(void *closure, struct spfs_entry *entry) {
   spfs_offset start = *((spfs_offset *)closure);
   BUG_ON(entry->kind != spfs_entry_kind_file);
   BUG_ON(entry->file_start != 0);
 
   entry->file_start = start;
-
-  return true;
 }
 
 /*
