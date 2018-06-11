@@ -64,7 +64,12 @@ spfs_priv_inode_init(struct inode *in) {
   }
 
   mutex_init(&result->lock);
-  // TODO add callback when inode gets destroyed to cleanup i_priv;
+  result->start = 0; // TODO
+
+  result->left = NULL;
+  result->right = NULL;
+
+  // TODO add callback when inode gets destroyed to cleanup i_private
   in->i_private = result;
   return result;
 }
@@ -102,7 +107,8 @@ spfs_convert_to_indode(struct super_block *sb, const struct spfs_entry *src,
     }
 
     if (d) {
-      strcpy(d->d_name.name, src->inode.name);
+      // TODO
+      /* strcpy(d->d_name.name, src->inode.name); */
 
       d_add(d, inode);
     }
@@ -260,93 +266,6 @@ spfs_mkdir(struct inode *parent, struct dentry *subject, umode_t mode) {
 }
 
 //=====================================
-typedef bool (*for_all_cb)(void *, struct spfs_entry *);
-
-static bool
-spfs_for_all_children(struct inode *parent, void *closure, for_all_cb f) {
-  // TODO
-  return true;
-}
-
-struct spfs_find_iname_name_data {
-  const char *name;
-  struct inode *result;
-};
-
-static bool
-spfs_find_inode_name_cb(void *closure, struct spfs_entry *cur) {
-  struct spfs_find_iname_name_data *data = closure;
-
-  if (strcmp(cur->inode.name, data->name) == 0) {
-    /* data->result = TODO*/
-    return false;
-  }
-
-  return true;
-}
-
-static struct inode *
-spfs_find_inode_name(struct spfs_super_block *sbi, struct inode *parent,
-                     const char *name) {
-  struct spfs_priv_inode *priv_inode = parent->i_private;
-  struct spfs_find_iname_name_data data = {
-      .name = name,
-      .result = NULL,
-  };
-
-  if (mutex_lock_interruptible(&priv_inode->lock)) {
-    // TODO return error(pointer error?)
-    return NULL;
-  }
-
-  spfs_for_all_children(parent, &data, &spfs_find_inode_name_cb);
-
-  mutex_unlock(&priv_inode->lock);
-
-  return data.result;
-}
-
-/*
- * Given parent inode & child filename lookup child inode & add it to child
- * dentry.
- */
-static struct dentry *
-spfs_lookup(struct inode *parent, struct dentry *child, unsigned int flags) {
-  /* struct inode *subject; */
-  struct super_block *sb;
-  struct spfs_super_block *sbi;
-  struct inode *result;
-
-  BUG_ON(!parent);
-  BUG_ON(!child);
-
-  sb = parent->i_sb;
-  BUG_ON(!sb);
-
-  sbi = sb->s_fs_info;
-  BUG_ON(!sbi);
-
-  result = spfs_find_inode_name(sbi, parent, child->d_name.name);
-
-  if (result) {
-    /* inode_init_owner(inode, parent, ); */
-    d_add(child, result);
-  }
-
-  return NULL;
-}
-
-static const struct inode_operations spfs_inode_ops = {
-    /**/
-    .create = spfs_create,
-    .lookup = spfs_lookup,
-    .mkdir = spfs_mkdir
-    /**/
-};
-
-//=====================================
-#define MIN(f, s) (f) > (s) ? (s) : (f)
-
 static unsigned int
 spfs_sb_remaining(struct buffer_head *bh, unsigned int pos) {
   BUG_ON(pos > bh->b_size);
@@ -380,6 +299,213 @@ spfs_sb_write_u32(struct buffer_head *bh, unsigned int *pos, unsigned int val) {
 
   return true;
 }
+
+//=====================================
+typedef bool (*for_all_cb)(void *, struct spfs_entry *);
+
+static bool
+spfs_for_all_children(struct inode *parent, void *closure, for_all_cb f) {
+  struct super_block *sb;
+  struct spfs_super_block *sbi;
+  struct spfs_priv_inode *priv_inode;
+
+  spfs_offset child_list = 0;
+
+  sb = parent->i_sb;
+  BUG_ON(!sb);
+
+  sbi = sb->s_fs_info;
+  BUG_ON(!sbi);
+
+  priv_inode = parent->i_private;
+  BUG_ON(!priv_inode);
+
+  BUG_ON(!S_ISDIR(parent->i_mode));
+
+  mutex_lock(&priv_inode->lock);
+  {
+    bool lres;
+    struct spfs_entry entry;
+
+    {
+      mutex_lock(&sbi->tree.lock);
+      lres = spfs_btree_lookup(&sbi->tree, parent->i_ino, &entry);
+      mutex_unlock(&sbi->tree.lock);
+    }
+
+    if (!lres) {
+      // TODO cleanup
+      return false;
+    }
+
+    child_list = entry.children;
+
+    BUG_ON(entry.kind != spfs_entry_kind_dir);
+  }
+
+Lit:
+  if (child_list) {
+    /*
+     * [next:u32,children:u32,ino:u32...]:4096
+     */
+    spfs_id current_inode;
+    spfs_offset next;
+    unsigned int children;
+    unsigned int i;
+    unsigned int bh_pos = 0;
+
+    struct buffer_head *bh;
+    bh = sb_bread(sb, child_list);
+    BUG_ON(!bh);
+
+    if (!spfs_sb_read_u32(bh, &bh_pos, &next)) {
+      mutex_unlock(&priv_inode->lock);
+      BUG();
+      return false;
+    }
+
+    if (!spfs_sb_read_u32(bh, &bh_pos, &children)) {
+      mutex_unlock(&priv_inode->lock);
+      BUG();
+      return false;
+    }
+    // TODO assert children < max
+
+    i = 0;
+    while (i < children) {
+      if (!spfs_sb_read_u32(bh, &bh_pos, &current_inode)) {
+        mutex_unlock(&priv_inode->lock);
+        BUG();
+        return false;
+      }
+
+      if (current_inode) {
+        struct spfs_entry cur_entry;
+        bool lres;
+
+        {
+          mutex_lock(&sbi->tree.lock);
+          lres = spfs_btree_lookup(&sbi->tree, current_inode, &cur_entry);
+          mutex_unlock(&sbi->tree.lock);
+        }
+
+        if (lres) {
+          if (!f(closure, &cur_entry)) {
+            mutex_unlock(&priv_inode->lock);
+            return false;
+          }
+        }
+
+        ++i;
+      }
+    }
+
+    brelse(bh);
+
+    child_list = next;
+    goto Lit;
+  }
+  mutex_unlock(&priv_inode->lock);
+
+  return true;
+}
+
+struct spfs_find_iname_name_data {
+  struct super_block *sb;
+  struct dentry *dentry;
+  const char *name;
+
+  struct inode *result;
+};
+
+static bool
+spfs_find_inode_name_cb(void *closure, struct spfs_entry *cur) {
+  struct spfs_find_iname_name_data *data = closure;
+
+  if (strcmp(cur->inode.name, data->name) == 0) {
+    /* data->result = TODO*/
+    data->result = spfs_convert_to_indode(data->sb, cur, data->dentry);
+    return false;
+  }
+
+  return true;
+}
+
+static struct inode *
+spfs_find_inode_name(struct super_block *sb, struct inode *parent,
+                     struct dentry *child) {
+  struct spfs_super_block *sbi;
+  const char *name;
+  struct spfs_priv_inode *priv_inode;
+  BUG_ON(!sb);
+  BUG_ON(!child);
+
+  sbi = sb->s_fs_info;
+  BUG_ON(!sbi);
+
+  name = child->d_name.name;
+  BUG_ON(!name);
+  priv_inode = parent->i_private;
+  BUG_ON(!priv_inode);
+
+  {
+    struct spfs_find_iname_name_data data = {
+        .sb = sb,
+        .dentry = child,
+        .name = name,
+
+        .result = NULL,
+    };
+
+    if (mutex_lock_interruptible(&priv_inode->lock)) {
+      // TODO return error(pointer error?)
+      return NULL;
+    }
+
+    spfs_for_all_children(parent, &data, &spfs_find_inode_name_cb);
+
+    mutex_unlock(&priv_inode->lock);
+
+    return data.result;
+  }
+}
+
+/*
+ * Given parent inode & child filename lookup child inode & add it to child
+ * dentry.
+ */
+static struct dentry *
+spfs_lookup(struct inode *parent, struct dentry *child, unsigned int flags) {
+  /* struct inode *subject; */
+  struct super_block *sb;
+  struct inode *result;
+
+  BUG_ON(!parent);
+  BUG_ON(!child);
+
+  sb = parent->i_sb;
+  BUG_ON(!sb);
+
+  result = spfs_find_inode_name(sb, parent, child);
+
+  if (result) {
+    /* inode_init_owner(inode, parent, ); */
+    d_add(child, result);
+  }
+
+  return NULL;
+}
+
+static const struct inode_operations spfs_inode_ops = {
+    /**/
+    .create = spfs_create,
+    .lookup = spfs_lookup,
+    .mkdir = spfs_mkdir
+    /**/
+};
+
+//=====================================
+#define MIN(f, s) (f) > (s) ? (s) : (f)
 
 static size_t
 spfs_blocks_for(size_t block_size, size_t len) {
@@ -739,115 +865,30 @@ static const struct file_operations spfs_file_ops = {
     /**/
 };
 //=====================================
+static bool
+spfs_iterate_cb(void *closure, struct spfs_entry *cur) {
+  struct dir_context *ctx = closure;
+  const char *name = cur->inode.name;
+
+  size_t nlength = sizeof(cur->inode.name);
+  dir_emit(ctx, name, nlength, cur->inode.id, DT_UNKNOWN);
+  ++ctx->pos;
+
+  return true;
+}
+
 static int
 spfs_iterate(struct file *file, struct dir_context *ctx) {
-  struct super_block *sb;
-  struct spfs_super_block *sbi;
-  struct inode *inode;
-  struct spfs_priv_inode *priv_inode;
+  struct inode *parent;
+  bool res;
 
-  inode = file_inode(file);
-  if (ctx->pos >= inode->i_size) {
+  parent = file_inode(file);
+  if (ctx->pos >= parent->i_size) {
     // TODO rentrant pos howdoes it work?
     return 0;
   }
 
-  sb = inode->i_sb;
-  BUG_ON(!sb);
-
-  sbi = sb->s_fs_info;
-  BUG_ON(!sbi);
-
-  priv_inode = inode->i_private;
-  BUG_ON(!priv_inode);
-
-  {
-    unsigned int children_total;
-    spfs_offset child_list;
-
-    mutex_lock(&priv_inode->lock);
-    {
-      bool lres;
-      struct spfs_entry entry;
-
-      mutex_lock(&sbi->tree.lock);
-      lres = spfs_btree_lookup(&sbi->tree, inode->i_ino, &entry);
-
-      if (!lres) {
-        mutex_unlock(&sbi->tree.lock);
-        mutex_unlock(&priv_inode->lock);
-        return -ENOMEM; //
-      }
-
-      child_list = entry.children;
-
-      BUG_ON(!S_ISDIR(inode->i_mode));
-      BUG_ON(entry.kind != spfs_entry_kind_dir);
-
-      mutex_unlock(&sbi->tree.lock);
-    }
-
-    children_total = 0;
-  Lit:
-    if (child_list) {
-      /*
-       * [next:u32,children:u32,ino:u32...]:4096
-       */
-      unsigned int current_inode;
-      spfs_offset next;
-      unsigned int children;
-      unsigned int i;
-      struct buffer_head *bh;
-      unsigned int bh_pos = 0;
-
-      bh = sb_bread(sb, child_list);
-      BUG_ON(!bh);
-      if (!spfs_sb_read_u32(bh, &bh_pos, &next)) {
-        mutex_unlock(&priv_inode->lock);
-        return -ENOMEM; // TODO
-      }
-      if (!spfs_sb_read_u32(bh, &bh_pos, &children)) {
-        mutex_unlock(&priv_inode->lock);
-        return -ENOMEM; // TODO
-      }
-      // TODO assert children < max
-
-      i = 0;
-      while (i < children) {
-        if (!spfs_sb_read_u32(bh, &bh_pos, &current_inode)) {
-          mutex_unlock(&priv_inode->lock);
-          return -ENOMEM; // TODO
-        }
-
-        if (current_inode) {
-          struct spfs_entry cur_entry;
-          bool lres;
-
-          {
-            mutex_lock(&sbi->tree.lock);
-            lres = spfs_btree_lookup(&sbi->tree, inode->i_ino, &cur_entry);
-            mutex_unlock(&sbi->tree.lock);
-          }
-
-          if (lres) {
-            const char *name = cur_entry.inode.name;
-            size_t nlength = sizeof(cur_entry.inode.name);
-            dir_emit(ctx, name, nlength, cur_entry.inode.id, DT_UNKNOWN);
-            ++ctx->pos;
-          }
-
-          ++i;
-        }
-      }
-
-      brelse(bh);
-
-      child_list = next;
-      goto Lit;
-    }
-
-    mutex_unlock(&priv_inode->lock);
-  }
+  res = spfs_for_all_children(parent, ctx, spfs_iterate_cb);
 
   return 0;
 }
