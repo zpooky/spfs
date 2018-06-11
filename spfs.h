@@ -42,8 +42,8 @@ struct spfs_entry {
   // TAG either file or dir
   int kind;
   union {
-    spfs_offset children;
-    spfs_offset files;
+    spfs_offset children_start;
+    spfs_offset file_start;
   };
 };
 

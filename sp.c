@@ -43,10 +43,10 @@ spfs_convert_from_inode(struct spfs_entry *dest, struct inode *src,
 
   if (S_ISDIR(mode)) {
     dest->kind = spfs_entry_kind_dir;
-    dest->children = 0;
+    dest->children_start = 0;
   } else if (S_ISREG(mode)) {
     dest->kind = spfs_entry_kind_file;
-    dest->files = 0;
+    dest->file_start = 0;
   } else {
     BUG();
   }
@@ -55,8 +55,9 @@ spfs_convert_from_inode(struct spfs_entry *dest, struct inode *src,
 }
 
 static struct spfs_priv_inode *
-spfs_priv_inode_init(struct inode *in) {
+spfs_priv_inode_init(struct inode *in, spfs_offset start) {
   struct spfs_priv_inode *result;
+
   result = kzalloc(sizeof(*result), GFP_KERNEL);
   if (!result) {
     // TODO gc
@@ -64,7 +65,7 @@ spfs_priv_inode_init(struct inode *in) {
   }
 
   mutex_init(&result->lock);
-  result->start = 0; // TODO
+  result->start = start;
 
   result->left = NULL;
   result->right = NULL;
@@ -79,6 +80,7 @@ spfs_convert_to_indode(struct super_block *sb, const struct spfs_entry *src,
                        struct dentry *d) {
   struct inode *inode;
   umode_t mode = src->inode.mode;
+  spfs_offset off_start = 0;
 
   BUG_ON(!sb);
 
@@ -88,9 +90,13 @@ spfs_convert_to_indode(struct super_block *sb, const struct spfs_entry *src,
     if (S_ISDIR(mode)) {
       inode->i_op = &spfs_inode_ops;
       inode->i_fop = &spfs_dir_ops;
+      off_start = src->children_start;
+
     } else if (S_ISREG(mode)) {
       inode->i_op = &spfs_inode_ops;
       inode->i_fop = &spfs_file_ops;
+      off_start = src->file_start;
+
     } else {
       BUG();
     }
@@ -101,7 +107,7 @@ spfs_convert_to_indode(struct super_block *sb, const struct spfs_entry *src,
     /* inode->i_ctime = src->inode.ctime; */
     inode->i_atime = inode->i_mtime = inode->i_ctime = current_time(inode);
 
-    if (!spfs_priv_inode_init(inode)) {
+    if (!spfs_priv_inode_init(inode, off_start)) {
       // TODO gc
       return NULL;
     }
@@ -176,7 +182,7 @@ spfs_new_inode(struct super_block *sb, umode_t mode) {
 
     inode->i_atime = inode->i_mtime = inode->i_ctime = current_time(inode);
 
-    if (!spfs_priv_inode_init(inode)) {
+    if (!spfs_priv_inode_init(inode, 0)) {
       // TODO gc
       return NULL;
     }
@@ -338,7 +344,7 @@ spfs_for_all_children(struct inode *parent, void *closure, for_all_cb f) {
       return false;
     }
 
-    child_list = entry.children;
+    child_list = entry.children_start;
 
     BUG_ON(entry.kind != spfs_entry_kind_dir);
   }
@@ -677,12 +683,12 @@ spfs_read(struct file *file, char __user *buf, size_t len, loff_t *ppos) {
 
 //=====================================
 static bool
-spfs_modify_start(void *closure, struct spfs_entry *entry) {
+spfs_modify_start_cb(void *closure, struct spfs_entry *entry) {
   spfs_offset start = *((spfs_offset *)closure);
   BUG_ON(entry->kind != spfs_entry_kind_file);
-  BUG_ON(entry->files != 0);
+  BUG_ON(entry->file_start != 0);
 
-  entry->files = start;
+  entry->file_start = start;
 
   return true;
 }
@@ -838,7 +844,7 @@ spfs_write(struct file *file, const char *buf, size_t len, loff_t *ppos) {
         mutex_lock(&sbi->tree.lock);
 
         lres = spfs_btree_modify(&sbi->tree, inode->i_ino, &start,
-                                 spfs_modify_start);
+                                 spfs_modify_start_cb);
         if (!lres) {
           // TODO release
           return 0;
