@@ -1036,7 +1036,7 @@ spfs_init_super_block(struct super_block *sb, struct spfs_super_block *super) {
   {
     int res;
     spfs_offset btree_start = start + super->block_size;
-    spfs_offset free_start = btree_start = super->block_size;
+    spfs_offset free_start = btree_start + super->block_size;
 
     res = spfs_btree_init(sb, &super->tree, spfs_entry_cmp, btree_start);
     if (res) {
