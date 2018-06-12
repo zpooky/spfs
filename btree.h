@@ -29,7 +29,7 @@ struct spfs_btree {
 
 extern int
 spfs_btree_init(struct super_block *sb, struct spfs_btree *, btree_cmp,
-                spfs_offset);
+                sector_t);
 
 extern bool
 spfs_btree_lookup(struct spfs_btree *, spfs_id ino, struct spfs_entry *out);

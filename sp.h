@@ -9,14 +9,14 @@
 #include "spfs.h"
 
 struct spfs_free_node {
-  spfs_offset start;
-  size_t length;
+  sector_t start;
+  size_t blocks;
   struct spfs_free_node *next;
 };
 
 struct spfs_free_list {
   struct mutex lock; // TODO spin lock
-  size_t length;
+  size_t blocks;
   struct spfs_free_node *root;
 };
 

@@ -19,6 +19,13 @@
  *
  * # linux/buffer_head.h
  * +sb_bread()
+ *
+ * #notes
+ * static DEFINE_RWLOCK(file_systems_lock);
+ * - write_lock(&file_systems_lock);
+ * - write_lock(&file_systems_lock);
+ * - read_lock(&file_systems_lock);
+ * - read_unlock(&file_systems_lock);
  */
 static const struct inode_operations spfs_inode_ops;
 static const struct file_operations spfs_file_ops;
@@ -416,6 +423,7 @@ Lit:
     child_list = next;
     goto Lit;
   }
+
   mutex_unlock(&priv_inode->lock);
 
   return true;
@@ -523,37 +531,34 @@ spfs_blocks_for(size_t block_size, size_t len) {
   return 0;
 }
 
-static spfs_offset
+static sector_t
 spfs_free_file_alloc(struct super_block *sb, size_t len) {
   // TODO support small return < len so that calller invokes f_file_alloc
   // multiple time
   struct spfs_super_block *sbi = sb->s_fs_info;
   struct spfs_free_list *free_list;
-  const size_t block_size = sbi->block_size;
-  const size_t blocks = spfs_blocks_for(block_size, len);
-  const size_t alloc_len = blocks * block_size;
-  spfs_offset result = 0;
+  const size_t blocks = spfs_blocks_for(sbi->block_size, len);
+  sector_t result = 0;
 
-  if (alloc_len == 0) {
+  if (len == 0) {
     return result;
   }
 
   free_list = &sbi->free_list;
-
   {
     struct spfs_free_node *list;
     mutex_lock(&free_list->lock);
-    if (free_list->length > alloc_len) {
+    if (free_list->blocks > blocks) {
       list = free_list->root;
 
     Lit:
       if (list) {
         /* TODO handle 0 length node */
-        if (list->length >= alloc_len) {
-          list->length -= alloc_len;
-          free_list->length -= alloc_len;
+        if (list->blocks >= blocks) {
+          list->blocks -= blocks;
+          free_list->blocks -= blocks;
 
-          result = list->start + list->length;
+          result = list->start + list->blocks;
         } else {
           list = list->next;
           goto Lit;
@@ -575,7 +580,7 @@ spfs_free_file_alloc(struct super_block *sb, size_t len) {
     if (!spfs_sb_write_u32(bh, &b_pos, 0)) {
       BUG();
     }
-    if (!spfs_sb_write_u32(bh, &b_pos, alloc_len)) {
+    if (!spfs_sb_write_u32(bh, &b_pos, blocks)) {
       BUG();
     }
     if (!spfs_sb_write_u32(bh, &b_pos, 0)) {
@@ -888,7 +893,6 @@ spfs_iterate_cb(void *closure, struct spfs_entry *cur) {
 static int
 spfs_iterate(struct file *file, struct dir_context *ctx) {
   struct inode *parent;
-  bool res;
 
   parent = file_inode(file);
   if (ctx->pos >= parent->i_size) {
@@ -896,8 +900,7 @@ spfs_iterate(struct file *file, struct dir_context *ctx) {
     return 0;
   }
 
-  res = spfs_for_all_children(parent, ctx, spfs_iterate_cb);
-
+  spfs_for_all_children(parent, ctx, spfs_iterate_cb);
   return 0;
 }
 
@@ -916,12 +919,38 @@ spfs_entry_cmp(const struct spfs_entry *f, const struct spfs_entry *s) {
   return 0;
 }
 
+static struct spfs_free_node *
+spfs_init_free_list_entry(struct buffer_head *bh, unsigned int *bh_pos) {
+  struct spfs_free_node *result;
+
+  spfs_offset entry_start;
+  unsigned int entry_blocks;
+
+  if (!spfs_sb_read_u32(bh, bh_pos, &entry_start)) {
+    return NULL;
+  }
+  if (!spfs_sb_read_u32(bh, bh_pos, &entry_blocks)) {
+    return NULL;
+  }
+
+  result = kzalloc(sizeof(*result), GFP_KERNEL);
+  if (!result) {
+    return NULL;
+  }
+
+  result->next = NULL;
+  result->start = entry_start;
+  result->blocks = entry_blocks;
+
+  return result;
+}
+
 static int
 spfs_init_free_list(struct super_block *sb, struct spfs_free_list *list,
-                    spfs_offset head) {
+                    sector_t head) {
   mutex_init(&list->lock);
   list->root = NULL;
-  list->length = 0;
+  list->blocks = 0;
 
 Lit:
   if (head) {
@@ -934,12 +963,12 @@ Lit:
 
     bh = sb_bread(sb, head);
     if (!bh) {
-      printk(KERN_INFO "NULL = sb_bread(sb, head[%u])\n", head);
+      printk(KERN_INFO "NULL = sb_bread(sb, head[%zu])\n", head);
       return 1;
     }
 
     /* entry[spfs_offset,size_t]
-     * free_list[length:u32,next:spfs_offset,entry:length]
+     * free_list[length:u32,next:spfs_offset,entry:[length]]
      */
 
     if (!spfs_sb_read_u32(bh, &bh_pos, &free_length)) {
@@ -950,31 +979,18 @@ Lit:
     }
 
     for (i = 0; i < free_length; ++i) {
-      struct spfs_free_node *node_next = list->root;
       struct spfs_free_node *node;
-      spfs_offset entry_start;
-      unsigned int entry_length;
+      node = spfs_init_free_list_entry(bh, &bh_pos);
 
-      if (!spfs_sb_read_u32(bh, &bh_pos, &entry_start)) {
-        // TODO bh release
-        return -EINVAL;
-      }
-      if (!spfs_sb_read_u32(bh, &bh_pos, &entry_length)) {
-        // TODO bh release
-        return -EINVAL;
-      }
-
-      node = kzalloc(sizeof(*node), GFP_KERNEL);
       if (!node) {
-        // TODO bh release
-        return -ENOMEM;
+        // TODO cleanup
+        return 1;
       }
-      node->next = node_next;
-      node->start = entry_start;
-      node->length = entry_length;
 
+      node->next = list->root;
       list->root = node;
-      list->length += entry_length;
+
+      list->blocks += node->blocks;
     }
 
     brelse(bh);
@@ -986,18 +1002,16 @@ Lit:
 }
 
 static int
-spfs_init_super_block(struct super_block *sb, struct spfs_super_block *super) {
+spfs_init_super_block(struct super_block *sb, struct spfs_super_block *super,
+                      sector_t start) {
   struct buffer_head *bh;
-  sector_t offset;
-  spfs_offset start = 0;
 
   BUG_ON(!sb);
   BUG_ON(!super);
 
-  offset = 0;
-  bh = sb_bread(sb, offset);
+  bh = sb_bread(sb, start);
   if (!bh) {
-    printk(KERN_INFO "bh = sb_bread(sb, offset[%zu])\n", offset);
+    printk(KERN_INFO "bh = sb_bread(sb, start[%zu])\n", start);
     return -EIO;
   }
 
@@ -1009,17 +1023,34 @@ spfs_init_super_block(struct super_block *sb, struct spfs_super_block *super) {
   }
 
   {
-    struct spfs_super_block_wire wire;
-    memcpy(/*DEST*/ &wire, /*SRC*/ bh->b_data, sizeof(wire));
-    brelse(bh);
-
-    super->version = be32_to_cpu(wire.version);
-    super->magic = be32_to_cpu(wire.magic);
-    super->block_size = be32_to_cpu(wire.block_size);
-    super->id = be32_to_cpu(wire.id);
+    unsigned int pos = 0;
     mutex_init(&super->id_lock);
-    super->root_id = be32_to_cpu(wire.root_id);
+    /* struct spfs_super_block_wire wire; */
+    /* memcpy(#<{(|DEST|)}># &wire, #<{(|SRC|)}># bh->b_data, sizeof(wire)); */
+
+    /* super->version = be32_to_cpu(wire.version); */
+    /* super->magic = be32_to_cpu(wire.magic); */
+    /* super->block_size = be32_to_cpu(wire.block_size); */
+    /* super->id = be32_to_cpu(wire.id); */
+    /* super->root_id = be32_to_cpu(wire.root_id); */
+
+    if (spfs_sb_read_u32(bh, &pos, &super->version)) {
+      return 1;
+    }
+    if (spfs_sb_read_u32(bh, &pos, &super->magic)) {
+      return 1;
+    }
+    if (spfs_sb_read_u32(bh, &pos, &super->block_size)) {
+      return 1;
+    }
+    if (spfs_sb_read_u32(bh, &pos, &super->id)) {
+      return 1;
+    }
+    if (spfs_sb_read_u32(bh, &pos, &super->root_id)) {
+      return 1;
+    }
   }
+  brelse(bh);
 
   if (super->magic != SPOOKY_FS_MAGIC) {
     printk(KERN_INFO "super->magic[%u] != SPOOKY_FS_MAGIC[%u]\n", //
@@ -1031,23 +1062,6 @@ spfs_init_super_block(struct super_block *sb, struct spfs_super_block *super) {
     printk(KERN_INFO "super->block_size:%u != SPOOKY_FS_BLOCK_SIZE:%u\n", //
            super->block_size, SPOOKY_FS_BLOCK_SIZE);
     return -ENOMEM;
-  }
-
-  {
-    int res;
-    spfs_offset btree_start = start + super->block_size;
-    spfs_offset free_start = btree_start + super->block_size;
-
-    res = spfs_btree_init(sb, &super->tree, spfs_entry_cmp, btree_start);
-    if (res) {
-      return res;
-    }
-
-    res = spfs_init_free_list(sb, &super->free_list, free_start);
-    if (res) {
-      printk(KERN_INFO "spfs_init_free_list()\n");
-      return res;
-    }
   }
 
   return 0;
@@ -1068,6 +1082,10 @@ spfs_init_super_block(struct super_block *sb, struct spfs_super_block *super) {
 
 static int
 spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
+  const spfs_offset super_start = 0;
+  const spfs_offset btree_start = super_start + 1;
+  const spfs_offset free_start = btree_start + 1;
+
   struct inode *root;
   struct spfs_super_block *sbi;
   int res;
@@ -1079,32 +1097,48 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
 
   /* Filesystem private info */
   sb->s_fs_info = sbi;
-
-  res = spfs_init_super_block(sb, sbi);
-  if (res) {
-    kfree(sb->s_fs_info);
-    sb->s_fs_info = NULL;
-    return res;
-  }
-
   /*  */
   sb->s_flags |= MS_NODIRATIME;
   /* TODO document why we do this */
   sb->s_magic = SPOOKY_FS_MAGIC;
-  /* sb->s_blocksize = sbi->block_size; */
   /* sb->s_blocksize_bits = get_bit_pos(sbi->block_size); */
+  sb->s_blocksize = SPOOKY_FS_BLOCK_SIZE;
+
+  res = spfs_init_super_block(sb, sbi, super_start);
+  if (res) {
+    goto Lerr;
+  }
+
+  // TODO index  need to be consistent
+  sb->s_blocksize = sbi->block_size;
+
+  res = spfs_btree_init(sb, &sbi->tree, spfs_entry_cmp, btree_start);
+  if (res) {
+    goto Lerr;
+  }
+
+  res = spfs_init_free_list(sb, &sbi->free_list, free_start);
+  if (res) {
+    goto Lerr;
+  }
 
   root = spfs_get_inode(sb, NULL, sbi->root_id);
   if (!root) {
     root = spfs_new_inode(sb, S_IFDIR);
     if (!root) {
-      return -ENOMEM;
+      res = -ENOMEM;
+      goto Lerr;
     }
     sbi->root_id = root->i_ino;
   }
   sb->s_root = d_make_root(root);
 
   return 0;
+Lerr:
+  kfree(sb->s_fs_info);
+  sb->s_fs_info = NULL;
+
+  return res;
 }
 
 static struct dentry *
@@ -1125,11 +1159,11 @@ spfs_kill_superblock(struct super_block *sb) {
 }
 
 struct file_system_type spfs_fs_type = {
-    .owner = THIS_MODULE,
     .name = "spfs",
+    .fs_flags = FS_REQUIRES_DEV, // TODO ?
     .mount = spfs_mount,
     .kill_sb = spfs_kill_superblock,
-    .fs_flags = FS_REQUIRES_DEV, // TODO ?
+    .owner = THIS_MODULE,
 };
 
 //=====================================
@@ -1139,6 +1173,15 @@ spfs_init(void) {
 
   printk(KERN_INFO "init spfs\n");
 
+  /*
+   *	Adds the file system passed to the list of file systems the kernel
+   *	is aware of for mount and other syscalls. Returns 0 on success,
+   *	or a negative errno code on an error.
+   *
+   *	The &struct file_system_type that is passed is linked into the kernel
+   *	structures and must not be freed until the file system has been
+   *	unregistered.
+   */
   ret = register_filesystem(&spfs_fs_type);
   if (likely(ret == 0)) {
     printk(KERN_INFO "Sucessfully register_filesystem(simplefs)\n");

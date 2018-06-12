@@ -14,7 +14,7 @@
 //=====================================
 int
 spfs_btree_init(struct super_block *sb, struct spfs_btree *tree, btree_cmp cmp,
-                spfs_offset start) {
+                sector_t start) {
   /* struct address_space *mapping; */
   /* struct page *page; */
   /* unsigned int size; */
