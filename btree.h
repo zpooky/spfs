@@ -7,38 +7,38 @@
 
 #include "spfs.h"
 
-typedef int (*btree_cmp)(const struct spfs_entry *, const struct spfs_entry *);
+// TODO use numeric 0:success otherwise:fail
 
-typedef void (*btree_modify_cb)(void *, struct spfs_entry *);
-
-// TODO this should be SP_FS_BLOCK_SIZE bytes
-struct spfs_bnode {
-  struct spfs_entry entries[1024];
-  size_t length;
-};
+// true: dirty, false: not_dirty
+typedef bool (*btree_modify_cb)(void *, struct spfs_entry *);
 
 struct spfs_btree {
-  btree_cmp cmp;
-  struct mutex lock;
-  size_t block_size;
-  spfs_offset start;
   struct super_block *sb;
+  struct mutex lock;
+
+  /* block { */
+  size_t block_size;
+  soze_t blocks;
+  sector_t start;
+  /* } */
 
   struct spfs_entry *dummy;
 };
 
 extern int
-spfs_btree_init(struct super_block *sb, struct spfs_btree *, btree_cmp,
-                sector_t);
+spfs_btree_init(struct super_block *sb, struct spfs_btree *, sector_t);
 
-extern bool
-spfs_btree_lookup(struct spfs_btree *, spfs_id ino, struct spfs_entry *out);
-
-extern bool
-spfs_btree_insert(struct spfs_btree *tree, struct spfs_entry *in);
-
-extern bool
+extern int
 spfs_btree_modify(struct spfs_btree *tree, spfs_id ino, void *,
                   btree_modify_cb);
+
+extern int
+spfs_btree_lookup(struct spfs_btree *, spfs_id ino, struct spfs_entry *out);
+
+extern int
+spfs_btree_insert(struct spfs_btree *tree, struct spfs_entry *in);
+
+extern int
+spfs_btree_remove(struct spfs_btree *, spfs_id ino);
 
 #endif

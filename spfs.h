@@ -38,7 +38,10 @@ struct spfs_inode {
 
 struct spfs_entry {
   struct spfs_inode inode;
+
+  // dummy {
   struct spfs_entry *next;
+  // }
 
   // TAG either file or dir
   int kind;

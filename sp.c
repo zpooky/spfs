@@ -26,6 +26,16 @@
  * - write_lock(&file_systems_lock);
  * - read_lock(&file_systems_lock);
  * - read_unlock(&file_systems_lock);
+ *
+ * #
+ * The type used for indexing onto a disc or disc partition.
+ *
+ * Linux always considers sectors to be 512 bytes long independently
+ * of the devices real block size.
+ *
+ * blkcnt_t is the type of the inode's block count.
+ * - typedef u64 sector_t;
+ * - typedef u64 blkcnt_t;
  */
 static const struct inode_operations spfs_inode_ops;
 static const struct file_operations spfs_file_ops;
@@ -134,9 +144,9 @@ spfs_convert_to_inode(struct super_block *sb, const struct spfs_entry *src,
 }
 
 static struct inode *
-spfs_get_inode(struct super_block *sb, struct dentry *d, spfs_id ino) {
+spfs_inode_by_id(struct super_block *sb, struct dentry *d, spfs_id ino) {
   struct spfs_super_block *sbi;
-  bool res;
+  int res;
   struct spfs_entry entry;
 
   sbi = sb->s_fs_info;
@@ -150,10 +160,10 @@ spfs_get_inode(struct super_block *sb, struct dentry *d, spfs_id ino) {
   }
 
   if (res) {
-    return spfs_convert_to_inode(sb, &entry, d);
+    return NULL;
   }
 
-  return NULL;
+  return spfs_convert_to_inode(sb, &entry, d);
 }
 
 static struct inode *
@@ -204,14 +214,13 @@ spfs_new_inode(struct super_block *sb, umode_t mode) {
 static int
 spfs_generic_create(struct inode *parent, struct dentry *den_subject,
                     umode_t mode) {
-  int ret;
+  int res;
   struct super_block *sb;
   struct spfs_super_block *sbi;
   const char *name;
 
   struct spfs_entry subject_entry;
   struct inode *subject;
-  bool ires;
 
   BUG_ON(!parent);
   BUG_ON(!den_subject);
@@ -233,26 +242,22 @@ spfs_generic_create(struct inode *parent, struct dentry *den_subject,
   d_add(den_subject, subject);
   BUG_ON(den_subject->d_inode != subject); // TODO ?
 
-  ret = spfs_convert_from_inode(/*dest*/ &subject_entry, subject, name, mode);
-  if (ret) {
-    // TODO cleanup
-    return ret;
+  res = spfs_convert_from_inode(/*dest*/ &subject_entry, subject, name, mode);
+  if (!res) {
+    if (mutex_lock_interruptible(&sbi->tree.lock)) {
+      // TODO cleanup
+      return -EINTR;
+    }
+
+    res = spfs_btree_insert(&sbi->tree, &subject_entry);
+    mutex_unlock(&sbi->tree.lock);
   }
 
-  if (mutex_lock_interruptible(&sbi->tree.lock)) {
-    // TODO cleanup
-    return -EINTR;
+  if (res) {
+    // TODO cleanup subject
   }
 
-  ires = spfs_btree_insert(&sbi->tree, &subject_entry);
-  mutex_unlock(&sbi->tree.lock);
-
-  if (!ires) {
-    // TODO cleanup
-    return -ENOMEM;
-  }
-
-  return 0;
+  return res;
 }
 
 //=====================================
@@ -342,16 +347,16 @@ spfs_for_all_children(struct inode *parent, void *closure, for_all_cb f) {
 
   mutex_lock(&priv_inode->lock);
   {
-    bool lres;
+    int res;
     struct spfs_entry entry;
 
     {
       mutex_lock(&sbi->tree.lock);
-      lres = spfs_btree_lookup(&sbi->tree, parent->i_ino, &entry);
+      res = spfs_btree_lookup(&sbi->tree, parent->i_ino, &entry);
       mutex_unlock(&sbi->tree.lock);
     }
 
-    if (!lres) {
+    if (res) {
       // TODO cleanup
       return false;
     }
@@ -399,7 +404,7 @@ Lit:
 
       if (current_inode) {
         struct spfs_entry cur_entry;
-        bool lres;
+        int lres;
 
         {
           mutex_lock(&sbi->tree.lock);
@@ -407,7 +412,7 @@ Lit:
           mutex_unlock(&sbi->tree.lock);
         }
 
-        if (lres) {
+        if (!lres) {
           if (!f(closure, &cur_entry)) {
             mutex_unlock(&priv_inode->lock);
             return false;
@@ -438,7 +443,7 @@ struct spfs_find_iname_name_data {
 };
 
 static bool
-spfs_find_inode_name_cb(void *closure, struct spfs_entry *cur) {
+spfs_inode_by_name_cb(void *closure, struct spfs_entry *cur) {
   struct spfs_find_iname_name_data *data = closure;
 
   if (strcmp(cur->inode.name, data->name) == 0) {
@@ -451,8 +456,8 @@ spfs_find_inode_name_cb(void *closure, struct spfs_entry *cur) {
 }
 
 static struct inode *
-spfs_find_inode_name(struct super_block *sb, struct inode *parent,
-                     struct dentry *child) {
+spfs_inode_by_name(struct super_block *sb, struct inode *parent,
+                   struct dentry *child) {
   struct spfs_super_block *sbi;
   const char *name;
   struct spfs_priv_inode *priv_inode;
@@ -481,7 +486,7 @@ spfs_find_inode_name(struct super_block *sb, struct inode *parent,
       return NULL;
     }
 
-    spfs_for_all_children(parent, &data, &spfs_find_inode_name_cb);
+    spfs_for_all_children(parent, &data, &spfs_inode_by_name_cb);
 
     mutex_unlock(&priv_inode->lock);
 
@@ -505,7 +510,7 @@ spfs_lookup(struct inode *parent, struct dentry *child, unsigned int flags) {
   sb = parent->i_sb;
   BUG_ON(!sb);
 
-  result = spfs_find_inode_name(sb, parent, child);
+  result = spfs_inode_by_name(sb, parent, child);
   if (result) {
     /* inode_init_owner(inode, parent, ); */
     d_add(child, result);
@@ -691,13 +696,15 @@ spfs_read(struct file *file, char __user *buf, size_t len, loff_t *ppos) {
 }
 
 //=====================================
-static void
+static bool
 spfs_modify_start_cb(void *closure, struct spfs_entry *entry) {
   spfs_offset start = *((spfs_offset *)closure);
   BUG_ON(entry->kind != spfs_entry_kind_file);
   BUG_ON(entry->file_start != 0);
 
   entry->file_start = start;
+
+  return true;
 }
 
 /*
@@ -748,9 +755,9 @@ spfs_write(struct file *file, const char *buf, size_t len, loff_t *ppos) {
 
     mutex_lock(&priv_inode->lock);
     start = priv_inode->start;
-    /*
-     * [next:u32,cap:u32,length:u32,raw:cap]
-     */
+  /*
+   * [next:u32,cap:u32,length:u32,raw:cap]
+   */
   Lit:
     if (start) {
       spfs_offset block_next;
@@ -847,12 +854,12 @@ spfs_write(struct file *file, const char *buf, size_t len, loff_t *ppos) {
       }
 
       {
-        bool lres;
+        int lres;
         mutex_lock(&sbi->tree.lock);
 
         lres = spfs_btree_modify(&sbi->tree, inode->i_ino, &start,
                                  spfs_modify_start_cb);
-        if (!lres) {
+        if (lres) {
           // TODO release
           return 0;
         }
@@ -910,15 +917,6 @@ static const struct file_operations spfs_dir_ops = {
     /**/
 };
 //=====================================
-static int
-spfs_entry_cmp(const struct spfs_entry *f, const struct spfs_entry *s) {
-  BUG_ON(!f);
-  BUG_ON(!s);
-
-  // TODO
-  return 0;
-}
-
 static struct spfs_free_node *
 spfs_init_free_list_entry(struct buffer_head *bh, unsigned int *bh_pos) {
   struct spfs_free_node *result;
@@ -1109,7 +1107,7 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
     goto Lerr;
   }
 
-  // TODO index  need to be consistent
+  // TODO sector_t index need to be consistent
   sb->s_blocksize = sbi->block_size;
 
   res = spfs_btree_init(sb, &sbi->tree, spfs_entry_cmp, btree_start);
@@ -1122,7 +1120,7 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
     goto Lerr;
   }
 
-  root = spfs_get_inode(sb, NULL, sbi->root_id);
+  root = spfs_inode_by_id(sb, NULL, sbi->root_id);
   if (!root) {
     root = spfs_new_inode(sb, S_IFDIR);
     if (!root) {
