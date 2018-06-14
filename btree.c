@@ -1,6 +1,8 @@
 #include "btree.h"
 #include "sp.h"
 
+#include <linux/buffer_head.h>
+
 /* #include <linux/slab.h> #<{(| kzalloc |)}># */
 
 /*
@@ -70,19 +72,18 @@ spfs_entry_cmp(const struct spfs_entry *f, const struct spfs_entry *s) {
   return f->inode.id > s->inode.id;
 }
 
-static struct spfs_entry *
-spfs_bin_find_gte(struct spfs_entry *entries, size_t length,
-                  const struct spfs_entry *needle) {
-  // TODO
-  return NULL;
-}
-
 struct spfs_bnode {
-  spfs_entry *entries;
+  struct spfs_entry *entries;
   size_t length;
 
   sector_t *children;
 };
+
+static struct spfs_entry *
+spfs_bin_find_gte(struct spfs_bnode *node, const struct spfs_entry *needle) {
+  // TODO
+  return NULL;
+}
 
 static int
 spfs_parse_bnode(struct buffer_head *bh, struct spfs_bnode *result) {
@@ -126,11 +127,11 @@ Lit:
       return -EINVAL;
     }
 
-    gte = spfs_bin_find_gte(&node, needle);
+    gte = spfs_bin_find_gte(&node, &needle);
     if (gte) {
       size_t index;
 
-      if (!spfs_entry_cmp(needle, *gte) && !spfs_entry_cmp(*gte, needle)) {
+      if (!spfs_entry_cmp(&needle, gte) && !spfs_entry_cmp(gte, &needle)) {
         /* equal */
 
         if (cb(closure, gte)) {
@@ -210,7 +211,7 @@ spfs_btree_insert(struct spfs_btree *tree, struct spfs_entry *in) {
 
 //=====================================
 int
-spfs_btree_remove(struct spfs_btree *, spfs_id ino) {
+spfs_btree_remove(struct spfs_btree *tree, spfs_id ino) {
   BUG();
   // TODO
   return 1;

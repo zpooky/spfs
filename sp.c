@@ -1110,7 +1110,7 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
   // TODO sector_t index need to be consistent
   sb->s_blocksize = sbi->block_size;
 
-  res = spfs_btree_init(sb, &sbi->tree, spfs_entry_cmp, btree_start);
+  res = spfs_btree_init(sb, &sbi->tree, btree_start);
   if (res) {
     goto Lerr;
   }

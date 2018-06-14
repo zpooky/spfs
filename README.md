@@ -27,7 +27,10 @@ https://wiki.archlinux.org/index.php/QEMU#QEMU.27s_built-in_SMB_server
 #debug
 
 ## enable build with debug symbols
-make menuconfig->kernel hacking->[]Kernel debugging->[]Compile the kernel with debug info(CONFIG_DEBUG_INFO)
+make menuconfig
+  ->kernel hacking
+  ->Compile time checks and ...
+  ->[]Compile the kernel with debug info(CONFIG_DEBUG_INFO)
 https://mchehab.fedorapeople.org/kernel_docs/dev-tools/gdb-kernel-debugging.html
 
 ## disable Kernel address space layout randomization

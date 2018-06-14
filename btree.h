@@ -18,7 +18,7 @@ struct spfs_btree {
 
   /* block { */
   size_t block_size;
-  soze_t blocks;
+  size_t blocks;
   sector_t start;
   /* } */
 
