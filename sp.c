@@ -1,4 +1,5 @@
 #include "sp.h"
+#include "util.h"
 
 #include <linux/buffer_head.h>
 #include <linux/kernel.h>
@@ -289,41 +290,6 @@ spfs_mkdir(struct inode *parent, struct dentry *subject, umode_t mode) {
 }
 
 //=====================================
-static unsigned int
-spfs_sb_remaining(struct buffer_head *bh, unsigned int pos) {
-  BUG_ON(pos > bh->b_size);
-  return bh->b_size - pos;
-}
-
-static bool
-spfs_sb_read_u32(struct buffer_head *bh, unsigned int *pos, unsigned int *out) {
-  if (spfs_sb_remaining(bh, *pos) < sizeof(*out)) {
-    return false;
-  }
-
-  memcpy(out, bh->b_data + *pos, sizeof(*out));
-  *out = be32_to_cpu(*out);
-
-  *pos += sizeof(*out);
-
-  return true;
-}
-
-static bool
-spfs_sb_write_u32(struct buffer_head *bh, unsigned int *pos, unsigned int val) {
-  if (spfs_sb_remaining(bh, *pos) < sizeof(val)) {
-    return false;
-  }
-
-  val = cpu_to_be32(val);
-  memcpy(/*dest*/ bh->b_data + *pos, /*src*/ &val, sizeof(val));
-
-  *pos += sizeof(val);
-
-  return true;
-}
-
-//=====================================
 typedef bool (*for_all_cb)(void *, struct spfs_entry *);
 
 static bool
@@ -530,75 +496,6 @@ static const struct inode_operations spfs_inode_ops = {
 //=====================================
 #define MIN(f, s) (f) > (s) ? (s) : (f)
 
-static size_t
-spfs_blocks_for(size_t block_size, size_t len) {
-  // TODO
-  return 0;
-}
-
-static sector_t
-spfs_free_file_alloc(struct super_block *sb, size_t len) {
-  // TODO support small return < len so that calller invokes f_file_alloc
-  // multiple time
-  struct spfs_super_block *sbi = sb->s_fs_info;
-  struct spfs_free_list *free_list;
-  const size_t blocks = spfs_blocks_for(sbi->block_size, len);
-  sector_t result = 0;
-
-  if (len == 0) {
-    return result;
-  }
-
-  free_list = &sbi->free_list;
-  {
-    struct spfs_free_node *list;
-    mutex_lock(&free_list->lock);
-    if (free_list->blocks > blocks) {
-      list = free_list->root;
-
-    Lit:
-      if (list) {
-        /* TODO handle 0 length node */
-        if (list->blocks >= blocks) {
-          list->blocks -= blocks;
-          free_list->blocks -= blocks;
-
-          result = list->start + list->blocks;
-        } else {
-          list = list->next;
-          goto Lit;
-        }
-      }
-    }
-    mutex_unlock(&free_list->lock);
-  }
-
-  if (result) {
-    unsigned int b_pos = 0;
-    struct buffer_head *bh;
-
-    bh = sb_bread(sb, result);
-    BUG_ON(!bh);
-
-    /* Make file header */
-    /* [next:u32,cap:u32,length:u32,raw:cap] */
-    if (!spfs_sb_write_u32(bh, &b_pos, 0)) {
-      BUG();
-    }
-    if (!spfs_sb_write_u32(bh, &b_pos, blocks)) {
-      BUG();
-    }
-    if (!spfs_sb_write_u32(bh, &b_pos, 0)) {
-      BUG();
-    }
-
-    mark_buffer_dirty(bh); // TODO maybe sync?
-    brelse(bh);
-  }
-
-  return result;
-}
-
 /*
  * Used to retrieve data from the device.
  * A non-negative return value represents the number of bytes successfully read.
@@ -716,7 +613,7 @@ spfs_modify_start_cb(void *closure, struct spfs_entry *entry) {
  * of the file, the length of the file shall be set to this file offset.
  */
 static ssize_t
-spfs_write(struct file *file, const char *buf, size_t len, loff_t *ppos) {
+spfs_write(struct file *file, const char __user *buf, size_t len, loff_t *ppos) {
   struct inode *inode;
   struct spfs_priv_inode *priv_inode;
   struct super_block *sb;
@@ -823,7 +720,7 @@ spfs_write(struct file *file, const char *buf, size_t len, loff_t *ppos) {
           *ppos = file_length;
           pos = 0;
 
-          block_next = spfs_free_file_alloc(sb, len);
+          block_next = spfs_free_alloc(sb, len);
           if (!block_next) {
             // TODO release
             return -EINVAL;
@@ -847,7 +744,7 @@ spfs_write(struct file *file, const char *buf, size_t len, loff_t *ppos) {
       goto Lit;
     } else {
 
-      start = spfs_free_file_alloc(sb, len);
+      start = spfs_free_alloc(sb, len);
       if (!start) {
         // TODO release
         return -EINVAL;
@@ -941,62 +838,6 @@ spfs_init_free_list_entry(struct buffer_head *bh, unsigned int *bh_pos) {
   result->blocks = entry_blocks;
 
   return result;
-}
-
-static int
-spfs_init_free_list(struct super_block *sb, struct spfs_free_list *list,
-                    sector_t head) {
-  mutex_init(&list->lock);
-  list->root = NULL;
-  list->blocks = 0;
-
-Lit:
-  if (head) {
-    unsigned int i = 0;
-    struct buffer_head *bh;
-    unsigned int bh_pos = 0;
-
-    unsigned int free_length;
-    spfs_offset free_next;
-
-    bh = sb_bread(sb, head);
-    if (!bh) {
-      printk(KERN_INFO "NULL = sb_bread(sb, head[%zu])\n", head);
-      return 1;
-    }
-
-    /* entry[spfs_offset,size_t]
-     * free_list[length:u32,next:spfs_offset,entry:[length]]
-     */
-
-    if (!spfs_sb_read_u32(bh, &bh_pos, &free_length)) {
-      return -EINVAL;
-    }
-    if (!spfs_sb_read_u32(bh, &bh_pos, &free_next)) {
-      return -EINVAL;
-    }
-
-    for (i = 0; i < free_length; ++i) {
-      struct spfs_free_node *node;
-      node = spfs_init_free_list_entry(bh, &bh_pos);
-
-      if (!node) {
-        // TODO cleanup
-        return 1;
-      }
-
-      node->next = list->root;
-      list->root = node;
-
-      list->blocks += node->blocks;
-    }
-
-    brelse(bh);
-    head = free_next;
-    goto Lit;
-  }
-
-  return 0;
 }
 
 static int

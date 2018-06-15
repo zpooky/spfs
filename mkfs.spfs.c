@@ -97,8 +97,9 @@ free_list(int fd, const struct spfs_super_block_wire *super) {
   const size_t length = s.st_size - start;
   const size_t blocks = length / super->block_size;
 
+  size_t hdd_block_size = s.st_blksize;
   printf("hdd block size[%zu], fs block size[%u]\n", //
-         s.st_blksize, super->block_size);
+         hdd_block_size, super->block_size);
   printf("header[%u], data[%zu]\n", //
          start, length);
   printf("data blocks[%zu]\n", blocks);

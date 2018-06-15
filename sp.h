@@ -5,20 +5,9 @@
 #include <linux/types.h>
 #include <stddef.h>
 
+#include "free_list.h"
 #include "btree.h"
 #include "spfs.h"
-
-struct spfs_free_node {
-  sector_t start;
-  size_t blocks;
-  struct spfs_free_node *next;
-};
-
-struct spfs_free_list {
-  struct mutex lock; // TODO spin lock
-  size_t blocks;
-  struct spfs_free_node *root;
-};
 
 struct spfs_super_block {
   unsigned int version;
