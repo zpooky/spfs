@@ -10,6 +10,9 @@
 typedef unsigned int spfs_offset;
 typedef unsigned int spfs_id;
 
+typedef spfs_id spfs_be_id;
+typedef sector_t spfs_be_sector_t;
+
 struct spfs_super_block_wire {
   unsigned int version;
   unsigned int magic;

@@ -107,13 +107,13 @@ spfs_convert_to_inode(struct super_block *sb, const struct spfs_entry *src,
   inode = new_inode(sb);
   if (inode) {
     inode->i_ino = src->inode.id;
+    inode->i_op = &spfs_inode_ops;
+
     if (S_ISDIR(mode)) {
-      inode->i_op = &spfs_inode_ops;
       inode->i_fop = &spfs_dir_ops;
       off_start = src->children_start;
 
     } else if (S_ISREG(mode)) {
-      inode->i_op = &spfs_inode_ops;
       inode->i_fop = &spfs_file_ops;
       off_start = src->file_start;
 
@@ -613,7 +613,8 @@ spfs_modify_start_cb(void *closure, struct spfs_entry *entry) {
  * of the file, the length of the file shall be set to this file offset.
  */
 static ssize_t
-spfs_write(struct file *file, const char __user *buf, size_t len, loff_t *ppos) {
+spfs_write(struct file *file, const char __user *buf, size_t len,
+           loff_t *ppos) {
   struct inode *inode;
   struct spfs_priv_inode *priv_inode;
   struct super_block *sb;
