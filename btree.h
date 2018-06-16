@@ -2,12 +2,11 @@
 #define _SP_FS_BTREE_H
 
 #include <linux/fs.h>
-#include <linux/types.h>
 #include <linux/mutex.h>
+#include <linux/types.h>
 #include <stddef.h>
 
 #include "spfs.h"
-
 
 // TODO use numeric 0:success otherwise:fail
 

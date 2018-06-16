@@ -24,12 +24,15 @@ struct spfs_bentry {
 };
 
 struct spfs_bnode {
-  __be32 *length;
-  struct spfs_bentry *entries;
-  spfs_be_sector_t *children;
+  /* __be32 *length; */
+  void *length;
+  /* struct spfs_bentry *entries; */
+  void *entries;
+  /* spfs_be_sector_t *children; */
+  void *children;
 };
 /*
- * TODO make bnode an opaque type to avoid direct access of its fields
+ * bnode & bentry should not be accessed directly
  */
 
 typedef sector_t spfs_entry_sector;
@@ -64,26 +67,34 @@ spfs_btree_init(struct super_block *sb, struct spfs_btree *tree,
   /* } */
 
   tree->dummy = NULL;
-  /*TODO btree magic*/
+  /*XXX btree magic*/
 
   return 0;
 }
 
 //=====================================
 static int
+spfs_be_id_cmp(spfs_be_id f, spfs_be_id s) {
+  spfs_id first;
+  spfs_id second;
+
+  first = be32_to_cpu(f);
+  second = be32_to_cpu(s);
+
+  return first > second;
+}
+
+static int
 spfs_entry_cmp(const struct spfs_bentry *f, const struct spfs_bentry *s) {
   BUG_ON(!f);
   BUG_ON(!s);
 
-  // TODO byteorder
-  return f->id > s->id;
+  return spfs_be_id_cmp(f->id, s->id);
 }
 
 static int
 spfs_bubble_cmp(const struct btree_bubble *bubble, spfs_be_id o) {
-  spfs_id id = be32_to_cpu(bubble->entry.id);
-  spfs_id other = be32_to_cpu(o);
-  return id > other;
+  return spfs_be_id_cmp(bubble->entry.id, o);
 }
 
 static bool
@@ -94,6 +105,77 @@ bentry_is_eq(const struct spfs_bentry *f, spfs_id id) {
 
 static size_t
 bnode_capacity(struct spfs_btree *self) {
+  // TODO
+  return 0;
+}
+
+static int
+bnode_parse(struct buffer_head *bh, struct spfs_bnode *result) {
+  char *it;
+  // TODO alignment of fields
+
+  BUG_ON(!bh);
+  it = bh->b_data;
+
+  result->length = it;
+  it += sizeof(__be32);
+
+  result->entries = it;
+  // TODO inc it
+  result->children = it;
+
+  return 0;
+}
+
+static int
+bnode_make(struct buffer_head *bh, struct btree_bubble *bubble,
+           struct spfs_bnode *result) {
+  BUG_ON(!bh);
+  // TODO
+  return 0;
+}
+
+static u32
+bnode_get_length(struct spfs_bnode *node) {
+  __be32 dest;
+  void *src = node->length;
+
+  memcpy(&dest, src, sizeof(dest));
+
+  return be32_to_cpu(dest);
+}
+
+static void
+bnode_set_child(struct spfs_bnode *node, size_t index,
+                struct btree_bubble *bubble) {
+  spfs_be_sector_t src;
+  // XXX size of sector_t = 32?
+  void *dest = node->children + (index * sizeof(src));
+
+  src = cpu_to_be32(bubble->greater);
+
+  memcpy(dest, &src, sizeof(spfs_be_sector_t));
+}
+
+static sector_t
+bnode_get_child(struct spfs_bnode *node, size_t index) {
+
+  void *src;
+  spfs_be_sector_t result;
+
+  BUG_ON(!node);
+  BUG_ON(index > bnode_get_length(node));
+
+  src = node->children + (index * sizeof(result));
+
+  memcpy(&result, src, sizeof(result));
+
+  // XXX size of sector
+  return be32_to_cpu(result);
+}
+
+static sector_t
+bnode_last_child(struct spfs_bnode *node) {
   // TODO
   return 0;
 }
@@ -109,7 +191,7 @@ bnode_bin_find_gte(struct spfs_bnode *node, spfs_id needle) {
   BUG_ON(!node->length);
 
   it = node->entries;
-  length = be32_to_cpu(node->length);
+  length = bnode_get_length(node);
   /* BUG_ON(length > bnode_capacity(node)); */
 
   end = it + length;
@@ -122,22 +204,6 @@ bnode_bin_find_gte(struct spfs_bnode *node, spfs_id needle) {
 
   // TODO
   return NULL;
-}
-
-static int
-bnode_parse(struct buffer_head *bh, struct spfs_bnode *result) {
-  BUG_ON(!bh);
-
-  // TODO
-  return -EINVAL;
-}
-
-static int
-bnode_make(struct buffer_head *bh, struct btree_bubble *bubble,
-           struct spfs_bnode *result) {
-  BUG_ON(!bh);
-  // TODO
-  return 0;
 }
 
 static size_t
@@ -192,27 +258,6 @@ btree_visit_entry(struct super_block *sb, spfs_entry_sector offset,
   return 0;
 }
 
-static size_t
-bnode_children(struct spfs_bnode *node) {
-  // TODO
-  return 0;
-}
-
-static sector_t
-bnode_child(struct spfs_bnode *node, size_t index) {
-  BUG_ON(index > bnode_children(node));
-
-  sector_t result = node->children[index];
-  // XXX size of sector
-  return be32_to_cpu(result);
-}
-
-static sector_t
-bnode_last_child(struct spfs_bnode *node) {
-  // TODO
-  return 0;
-}
-
 int
 spfs_btree_modify(struct spfs_btree *tree, spfs_id ino, void *closure,
                   btree_modify_cb cb) {
@@ -251,14 +296,14 @@ Lit:
       index = bnode_index_of(&node, gte);
       /* assertxs(index != capacity(entries), index, length(entries)); */
 
-      offset = bnode_child(&node, index);
+      offset = bnode_get_child(&node, index);
 
       brelse(bh);
       goto Lit;
     } else {
 
       /* $ino is greater than any other entry in entries */
-      offset = bnode_child(&node, node.length);
+      offset = bnode_get_child(&node, bnode_get_length(&node));
 
       brelse(bh);
       goto Lit;
@@ -302,7 +347,7 @@ spfs_btree_lookup(struct spfs_btree *tree, spfs_id ino,
 //=====================================
 static bool
 bnode_is_full(struct spfs_btree *self, struct spfs_bnode *tree) {
-  return be32_to_cpu(tree->length) == bnode_capacity(self);
+  return bnode_get_length(tree) == bnode_capacity(self);
 }
 
 static bool
@@ -400,7 +445,7 @@ btree_insert(struct spfs_btree *self, struct spfs_bnode *tree,
     BUG_ON(index == bnode_capacity(self));
 
     // TODO sb buffer map child
-    sector_t child = bnode_child(tree, index);
+    sector_t child = bnode_get_child(tree, index);
     res = btree_insert(self, child, in, bubble, out);
   } else {
     BUG_ON(bnode_is_empty(tree));
@@ -434,13 +479,6 @@ bnode_alloc_empty(struct spfs_btree *self) {
   sector_t right_page = spfs_free_alloc(sb, self->blocks);
   BUG_ON(!right_page); // XXX
   return 0;
-}
-
-static void
-bnode_set_child(struct spfs_bnode *tree, size_t index,
-                struct btree_bubble *bubble) {
-  // TODO
-  tree->children[index] = bubble->greater;
 }
 
 static int
