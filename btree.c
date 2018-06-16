@@ -15,8 +15,8 @@
  */
 
 //=====================================
-typedef double spfs_be_sector_t;
-/* typedef sector_t spfs_be_sector_t; */
+/* typedef double spfs_be_sector_t; */
+typedef sector_t spfs_be_sector_t;
 
 struct spfs_bentry {
   spfs_be_id id;
