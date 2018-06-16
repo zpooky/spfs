@@ -1,6 +1,32 @@
 #include "free_list.h"
 
 /* ===================================== */
+static struct spfs_free_node *
+spfs_init_free_list_entry(struct buffer_head *bh, unsigned int *bh_pos) {
+  struct spfs_free_node *result;
+
+  spfs_offset entry_start;
+  unsigned int entry_blocks;
+
+  if (!spfs_sb_read_u32(bh, bh_pos, &entry_start)) {
+    return NULL;
+  }
+  if (!spfs_sb_read_u32(bh, bh_pos, &entry_blocks)) {
+    return NULL;
+  }
+
+  result = kzalloc(sizeof(*result), GFP_KERNEL);
+  if (!result) {
+    return NULL;
+  }
+
+  result->next = NULL;
+  result->start = entry_start;
+  result->blocks = entry_blocks;
+
+  return result;
+}
+
 int
 spfs_init_free_list(struct super_block *sb, struct spfs_free_list *list,
                     sector_t head) {

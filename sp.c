@@ -502,7 +502,6 @@ static const struct inode_operations spfs_inode_ops = {
  */
 static ssize_t
 spfs_read(struct file *file, char __user *buf, size_t len, loff_t *ppos) {
-  printk(KERN_INFO "spfs_read()\n");
 
   struct inode *inode;
   struct spfs_priv_inode *priv_inode;
@@ -511,6 +510,8 @@ spfs_read(struct file *file, char __user *buf, size_t len, loff_t *ppos) {
 
   loff_t pos = *ppos;
   ssize_t read = 0;
+
+  printk(KERN_INFO "spfs_read()\n");
 
   if (!ppos) {
     return -EINVAL;
@@ -617,7 +618,6 @@ spfs_modify_start_cb(void *closure, struct spfs_entry *entry) {
 static ssize_t
 spfs_write(struct file *file, const char __user *buf, size_t len,
            loff_t *ppos) {
-  printk(KERN_INFO "spfs_write()\n");
 
   struct inode *inode;
   struct spfs_priv_inode *priv_inode;
@@ -625,8 +625,11 @@ spfs_write(struct file *file, const char __user *buf, size_t len,
   struct spfs_super_block *sbi;
   unsigned long file_length = 0;
 
+
   loff_t pos = *ppos;
   ssize_t written = 0;
+
+  printk(KERN_INFO "spfs_write()\n");
 
   if (!ppos) {
     return -EINVAL;
@@ -801,9 +804,10 @@ spfs_iterate_cb(void *closure, struct spfs_entry *cur) {
 
 static int
 spfs_iterate(struct file *file, struct dir_context *ctx) {
-  printk(KERN_INFO "spfs_iterate()\n");
 
   struct inode *parent;
+
+  printk(KERN_INFO "spfs_iterate()\n");
 
   parent = file_inode(file);
   if (ctx->pos >= parent->i_size) {
@@ -821,32 +825,6 @@ static const struct file_operations spfs_dir_ops = {
     /**/
 };
 //=====================================
-static struct spfs_free_node *
-spfs_init_free_list_entry(struct buffer_head *bh, unsigned int *bh_pos) {
-  struct spfs_free_node *result;
-
-  spfs_offset entry_start;
-  unsigned int entry_blocks;
-
-  if (!spfs_sb_read_u32(bh, bh_pos, &entry_start)) {
-    return NULL;
-  }
-  if (!spfs_sb_read_u32(bh, bh_pos, &entry_blocks)) {
-    return NULL;
-  }
-
-  result = kzalloc(sizeof(*result), GFP_KERNEL);
-  if (!result) {
-    return NULL;
-  }
-
-  result->next = NULL;
-  result->start = entry_start;
-  result->blocks = entry_blocks;
-
-  return result;
-}
-
 static int
 spfs_init_super_block(struct super_block *sb, struct spfs_super_block *super,
                       sector_t start) {
@@ -928,15 +906,15 @@ spfs_init_super_block(struct super_block *sb, struct spfs_super_block *super,
 
 static int
 spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
-  printk(KERN_INFO "spfs_kill_super_block()\n");
+  struct inode *root;
+  struct spfs_super_block *sbi;
+  int res;
 
   const spfs_offset super_start = 0;
   const spfs_offset btree_start = super_start + 1;
   const spfs_offset free_start = btree_start + 1;
 
-  struct inode *root;
-  struct spfs_super_block *sbi;
-  int res;
+  printk(KERN_INFO "spfs_kill_super_block()\n");
 
   sbi = kzalloc(sizeof(*sbi), GFP_KERNEL);
   if (!sbi) {
@@ -998,8 +976,9 @@ spfs_mount(struct file_system_type *fs_type, int flags, const char *dev_name,
 
 static void
 spfs_kill_superblock(struct super_block *sb) {
-  printk(KERN_INFO "spfs_kill_superblock()\n");
   struct spfs_super_block *sbi;
+
+  printk(KERN_INFO "spfs_kill_superblock()\n");
 
   sbi = sb->s_fs_info;
   if (sbi) {
