@@ -1,6 +1,7 @@
 #ifndef _SP_FS_FREE_LIST_H
 #define _SP_FS_FREE_LIST_H
 
+#include <linux/fs.h>
 #include <linux/limits.h>
 #include <linux/mutex.h>
 #include <linux/types.h>

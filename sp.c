@@ -502,6 +502,8 @@ static const struct inode_operations spfs_inode_ops = {
  */
 static ssize_t
 spfs_read(struct file *file, char __user *buf, size_t len, loff_t *ppos) {
+  printk(KERN_INFO "spfs_read()\n");
+
   struct inode *inode;
   struct spfs_priv_inode *priv_inode;
   struct super_block *sb;
@@ -615,6 +617,8 @@ spfs_modify_start_cb(void *closure, struct spfs_entry *entry) {
 static ssize_t
 spfs_write(struct file *file, const char __user *buf, size_t len,
            loff_t *ppos) {
+  printk(KERN_INFO "spfs_write()\n");
+
   struct inode *inode;
   struct spfs_priv_inode *priv_inode;
   struct super_block *sb;
@@ -797,6 +801,8 @@ spfs_iterate_cb(void *closure, struct spfs_entry *cur) {
 
 static int
 spfs_iterate(struct file *file, struct dir_context *ctx) {
+  printk(KERN_INFO "spfs_iterate()\n");
+
   struct inode *parent;
 
   parent = file_inode(file);
@@ -922,6 +928,8 @@ spfs_init_super_block(struct super_block *sb, struct spfs_super_block *super,
 
 static int
 spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
+  printk(KERN_INFO "spfs_kill_super_block()\n");
+
   const spfs_offset super_start = 0;
   const spfs_offset btree_start = super_start + 1;
   const spfs_offset free_start = btree_start + 1;
@@ -984,11 +992,13 @@ Lerr:
 static struct dentry *
 spfs_mount(struct file_system_type *fs_type, int flags, const char *dev_name,
            void *data) {
+  printk(KERN_INFO "spfs_mount()\n");
   return mount_bdev(fs_type, flags, dev_name, data, spfs_fill_super_block);
 }
 
 static void
 spfs_kill_superblock(struct super_block *sb) {
+  printk(KERN_INFO "spfs_kill_superblock()\n");
   struct spfs_super_block *sbi;
 
   sbi = sb->s_fs_info;
