@@ -44,32 +44,28 @@ static const struct file_operations spfs_dir_ops;
 
 //=====================================
 static int
-spfs_convert_from_inode(struct spfs_entry *dest, struct inode *src,
+spfs_convert_from_inode(struct spfs_inode *dest, struct inode *src,
                         const char *name, umode_t mode) {
   size_t n_length = strlen(name);
 
   BUG_ON(!dest);
   BUG_ON(!src);
 
-  if (n_length > sizeof(dest->inode.name)) {
+  if (n_length > sizeof(dest->name)) {
     return 1;
   }
-  strcpy(dest->inode.name, name);
+  strcpy(dest->name, name);
 
-  dest->inode.mode = mode;
-  dest->inode.id = src->i_ino;
+  dest->mode = mode;
+  dest->id = src->i_ino;
 
   if (S_ISDIR(mode)) {
-    dest->kind = spfs_entry_kind_dir;
     dest->children_start = 0;
   } else if (S_ISREG(mode)) {
-    dest->kind = spfs_entry_kind_file;
     dest->file_start = 0;
   } else {
     BUG();
   }
-
-  dest->next = NULL;
 
   return 0;
 }
@@ -96,17 +92,17 @@ spfs_priv_inode_init(struct inode *in, spfs_offset start) {
 }
 
 static struct inode *
-spfs_convert_to_inode(struct super_block *sb, const struct spfs_entry *src,
+spfs_convert_to_inode(struct super_block *sb, const struct spfs_inode *src,
                       struct dentry *d) {
   struct inode *inode;
-  umode_t mode = src->inode.mode;
+  umode_t mode = src->mode;
   spfs_offset off_start = 0;
 
   BUG_ON(!sb);
 
   inode = new_inode(sb);
   if (inode) {
-    inode->i_ino = src->inode.id;
+    inode->i_ino = src->id;
     inode->i_op = &spfs_inode_ops;
 
     if (S_ISDIR(mode)) {
@@ -118,7 +114,7 @@ spfs_convert_to_inode(struct super_block *sb, const struct spfs_entry *src,
       off_start = src->file_start;
 
     } else {
-      printk(KERN_INFO "BUG(), mode[%u], name[%s]", mode, src->inode.name);
+      printk(KERN_INFO "BUG(), mode[%u], name[%s]", mode, src->name);
       BUG();
     }
 
@@ -148,7 +144,7 @@ static struct inode *
 spfs_inode_by_id(struct super_block *sb, struct dentry *d, spfs_id ino) {
   struct spfs_super_block *sbi;
   int res;
-  struct spfs_entry entry;
+  struct spfs_inode entry;
 
   sbi = sb->s_fs_info;
 
@@ -220,7 +216,7 @@ spfs_generic_create(struct inode *parent, struct dentry *den_subject,
   struct spfs_super_block *sbi;
   const char *name;
 
-  struct spfs_entry subject_entry;
+  struct spfs_inode subject_entry;
   struct inode *subject;
 
   BUG_ON(!parent);
@@ -290,7 +286,7 @@ spfs_mkdir(struct inode *parent, struct dentry *subject, umode_t mode) {
 }
 
 //=====================================
-typedef bool (*for_all_cb)(void *, struct spfs_entry *);
+typedef bool (*for_all_cb)(void *, struct spfs_inode *);
 
 static bool
 spfs_for_all_children(struct inode *parent, void *closure, for_all_cb f) {
@@ -314,7 +310,7 @@ spfs_for_all_children(struct inode *parent, void *closure, for_all_cb f) {
   mutex_lock(&priv_inode->lock);
   {
     int res;
-    struct spfs_entry entry;
+    struct spfs_inode entry;
 
     {
       mutex_lock(&sbi->tree.lock);
@@ -329,7 +325,7 @@ spfs_for_all_children(struct inode *parent, void *closure, for_all_cb f) {
 
     child_list = entry.children_start;
 
-    BUG_ON(entry.kind != spfs_entry_kind_dir);
+    BUG_ON(!S_ISDIR(entry.mode));
   }
 
 Lit:
@@ -369,7 +365,7 @@ Lit:
       }
 
       if (current_inode) {
-        struct spfs_entry cur_entry;
+        struct spfs_inode cur_entry;
         int lres;
 
         {
@@ -409,10 +405,10 @@ struct spfs_find_iname_name_data {
 };
 
 static bool
-spfs_inode_by_name_cb(void *closure, struct spfs_entry *cur) {
+spfs_inode_by_name_cb(void *closure, struct spfs_inode *cur) {
   struct spfs_find_iname_name_data *data = closure;
 
-  if (strcmp(cur->inode.name, data->name) == 0) {
+  if (strcmp(cur->name, data->name) == 0) {
     /* data->result = TODO*/
     data->result = spfs_convert_to_inode(data->sb, cur, data->dentry);
     return false;
@@ -597,9 +593,10 @@ spfs_read(struct file *file, char __user *buf, size_t len, loff_t *ppos) {
 
 //=====================================
 static bool
-spfs_modify_start_cb(void *closure, struct spfs_entry *entry) {
+spfs_modify_start_cb(void *closure, struct spfs_inode *entry) {
   spfs_offset start = *((spfs_offset *)closure);
-  BUG_ON(entry->kind != spfs_entry_kind_file);
+
+  BUG_ON(!S_ISREG(entry->mode));
   BUG_ON(entry->file_start != 0);
 
   entry->file_start = start;
@@ -624,7 +621,6 @@ spfs_write(struct file *file, const char __user *buf, size_t len,
   struct super_block *sb;
   struct spfs_super_block *sbi;
   unsigned long file_length = 0;
-
 
   loff_t pos = *ppos;
   ssize_t written = 0;
@@ -791,12 +787,12 @@ static const struct file_operations spfs_file_ops = {
 };
 //=====================================
 static bool
-spfs_iterate_cb(void *closure, struct spfs_entry *cur) {
+spfs_iterate_cb(void *closure, struct spfs_inode *cur) {
   struct dir_context *ctx = closure;
-  const char *name = cur->inode.name;
+  const char *name = cur->name;
 
-  size_t nlength = sizeof(cur->inode.name);
-  dir_emit(ctx, name, nlength, cur->inode.id, DT_UNKNOWN);
+  size_t nlength = sizeof(name);
+  dir_emit(ctx, name, nlength, cur->id, DT_UNKNOWN);
   ++ctx->pos;
 
   return true;

@@ -35,7 +35,7 @@ struct spfs_bnode {
  * bnode & bentry should not be accessed directly
  */
 
-typedef sector_t spfs_entry_sector;
+typedef sector_t spfs_inode_sector;
 
 struct btree_bubble {
   struct spfs_bentry entry;
@@ -85,7 +85,7 @@ spfs_be_id_cmp(spfs_be_id f, spfs_be_id s) {
 }
 
 static int
-spfs_entry_cmp(const struct spfs_bentry *f, spfs_id second) {
+spfs_inode_cmp(const struct spfs_bentry *f, spfs_id second) {
   spfs_id first;
   BUG_ON(!f);
   first = be32_to_cpu(f->id);
@@ -213,7 +213,7 @@ bnode_bin_find_gte(struct spfs_btree *self, struct spfs_bnode *node,
   // TODO verify
   while (it < end) {
     struct spfs_bentry *mid = it + (spfs_ptr_length(it, end) / 2);
-    if (spfs_entry_cmp(mid, /*>*/ needle)) {
+    if (spfs_inode_cmp(mid, /*>*/ needle)) {
       end = mid;
     } else {
       if (bentry_is_eq(mid, needle)) {
@@ -250,25 +250,25 @@ bnode_index_of(struct spfs_btree *self, struct spfs_bnode *node,
 }
 
 static int
-spfs_entry_parse(struct buffer_head *bh, struct spfs_entry *out) {
+spfs_inode_parse(struct buffer_head *bh, struct spfs_inode *out) {
   // TODO
   return 0;
 }
 
 static int
-spfs_entry_make(struct super_block *sb, spfs_entry_sector page,
-                const struct spfs_entry *in) {
+spfs_inode_make(struct super_block *sb, spfs_inode_sector page,
+                const struct spfs_inode *in) {
   // TODO
   return 0;
 }
 
 /* ===================================== */
 static int
-btree_visit_entry(struct super_block *sb, spfs_entry_sector offset,
+btree_visit_entry(struct super_block *sb, spfs_inode_sector offset,
                   void *closure, btree_modify_cb cb) {
   int res;
   struct buffer_head *bh;
-  struct spfs_entry cur;
+  struct spfs_inode cur;
 
   if (!offset) {
     return 1;
@@ -280,7 +280,7 @@ btree_visit_entry(struct super_block *sb, spfs_entry_sector offset,
     return 10;
   }
 
-  res = spfs_entry_parse(bh, &cur);
+  res = spfs_inode_parse(bh, &cur);
   if (res) {
     brelse(bh);
     return res;
@@ -323,7 +323,7 @@ Lit:
 
       if (bentry_is_eq(gte, ino)) {
         /* equal */
-        spfs_entry_sector entry_offset = gte->offset;
+        spfs_inode_sector entry_offset = gte->offset;
         brelse(bh); /*invalidatess $gte*/
 
         return btree_visit_entry(sb, entry_offset, closure, cb);
@@ -354,7 +354,7 @@ Lit:
 
   return 1;
 #if 0
-  struct spfs_entry *res = btree_get_node(self, ino);
+  struct spfs_inode *res = btree_get_node(self, ino);
   if (res) {
     cb(closure, res);
   }
@@ -365,8 +365,8 @@ Lit:
 
 //=====================================
 static bool
-spfs_btree_lookup_cb(void *closure, struct spfs_entry *result) {
-  struct spfs_entry *dest = closure;
+spfs_btree_lookup_cb(void *closure, struct spfs_inode *result) {
+  struct spfs_inode *dest = closure;
 
   memcpy(dest, result, sizeof(*result));
 
@@ -376,7 +376,7 @@ spfs_btree_lookup_cb(void *closure, struct spfs_entry *result) {
 
 int
 spfs_btree_lookup(struct spfs_btree *tree, spfs_id ino,
-                  struct spfs_entry *result) {
+                  struct spfs_inode *result) {
 
   return spfs_btree_modify(tree, ino, result, spfs_btree_lookup_cb);
 }
@@ -436,8 +436,8 @@ btree_fixup(struct spfs_btree *self, struct spfs_bnode *tree,
  */
 static int
 btree_insert(struct spfs_btree *self, struct spfs_bnode *tree,
-             struct spfs_entry *in, struct btree_bubble *bubble,
-             spfs_entry_sector *out) {
+             struct spfs_inode *in, struct btree_bubble *bubble,
+             spfs_inode_sector *out) {
   int res;
   struct spfs_bentry *gte;
 
@@ -450,7 +450,7 @@ btree_insert(struct spfs_btree *self, struct spfs_bnode *tree,
       return 1;
     }
 
-    res = spfs_entry_make(sb, page, in);
+    res = spfs_inode_make(sb, page, in);
     if (res) {
       // XXX page reclaim
       return res;
@@ -458,7 +458,7 @@ btree_insert(struct spfs_btree *self, struct spfs_bnode *tree,
     *out = page;
 
     // TODO byte order
-    bubble->entry.id = in->inode.id;
+    bubble->entry.id = in->id;
     bubble->entry.offset = page;
     bubble->greater = 0;
 
@@ -467,12 +467,12 @@ btree_insert(struct spfs_btree *self, struct spfs_bnode *tree,
   }
 
   /* 1. Traverse down */
-  gte = bnode_bin_find_gte(self, tree, in->inode.id);
+  gte = bnode_bin_find_gte(self, tree, in->id);
   if (gte) {
     size_t index;
     sector_t child;
 
-    if (bentry_is_eq(gte, in->inode.id)) {
+    if (bentry_is_eq(gte, in->id)) {
       /* duplicate */
       *out = gte->offset; // TODO byteorder
       return 1;
@@ -673,13 +673,13 @@ Lret:
 }
 
 int
-spfs_btree_insert(struct spfs_btree *self, struct spfs_entry *in) {
+spfs_btree_insert(struct spfs_btree *self, struct spfs_inode *in) {
   int res;
   struct buffer_head *bh;
   struct spfs_bnode tree = {};
   struct btree_bubble bubble;
   struct super_block *sb;
-  spfs_entry_sector out;
+  spfs_inode_sector out;
 
   sb = self->sb;
   /* Result as the location of the inserted entry. */

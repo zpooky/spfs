@@ -23,6 +23,9 @@ struct spfs_super_block_wire {
   // char dummy[SPOOKY_FS_BLOCK_SIZE - (sizeof(unsigned int) * 2)];
 };
 
+// #define spfs_entry_kind_file 1
+// #define spfs_entry_kind_dir 2
+
 struct spfs_inode {
   spfs_id id;
 
@@ -33,18 +36,6 @@ struct spfs_inode {
   mode_t mode;
 
   char name[SPOOKY_FS_NAME_MAX];
-};
-
-#define spfs_entry_kind_file 1
-#define spfs_entry_kind_dir 2
-
-struct spfs_entry {
-  struct spfs_inode inode;
-
-  // dummy {
-  struct spfs_entry *next;
-  // }
-
   // TAG either file or dir
   int kind;
   union {
