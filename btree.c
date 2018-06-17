@@ -211,7 +211,7 @@ bnode_bin_find_gte(struct spfs_btree *self, struct spfs_bnode *node,
 
   end = it + length;
 
-  // TODO verify
+  // TODO should find gte not only e;
   while (it < end) {
     struct spfs_bentry *mid = it + (spfs_ptr_length(it, end) / 2);
     if (spfs_inode_cmp(mid, /*>*/ needle)) {
@@ -485,15 +485,22 @@ bnode_is_empty(const struct spfs_bnode *tree) {
   return bnode_get_length(tree) == 0;
 }
 
-static sector_t *
-bnode_child_insert(struct spfs_bnode *node, sector_t child) {
-  // TODO
-  return NULL;
+static int
+bnode_child_add_back(struct spfs_bnode *node, sector_t child) {
+  // XXX alignment
+  spfs_be_sector_t src = cpu_to_be32(child);
+  spfs_be_sector_t *dest = (spfs_be_sector_t *)node->children;
+  dest += bnode_get_length(node);
+
+  memcpy(dest, &src, sizeof(src));
+
+  return 0;
 }
 
 static int
 bnode_partition(struct spfs_bnode *tree, spfs_id med,
                 struct spfs_bnode *right) {
+  // TODO
   return 0;
 }
 
@@ -744,8 +751,8 @@ bnode_alloc_root(struct spfs_btree *self, struct btree_bubble *bubble) {
   self->start = root;
 
   {
-    sector_t *ires = bnode_child_insert(&tree, less);
-    BUG_ON(!ires);
+    int res = bnode_child_add_back(&tree, less);
+    BUG_ON(!res);
   }
 
   {
