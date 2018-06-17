@@ -510,8 +510,13 @@ spfs_read(struct file *file, char __user *buf, size_t len, loff_t *ppos) {
   struct super_block *sb;
   struct spfs_super_block *sbi;
 
-  loff_t pos = *ppos;
-  ssize_t read = 0;
+  loff_t pos;
+  ssize_t read;
+
+  BUG_ON(!ppos);
+
+  pos = *ppos;
+  read = 0;
 
   printk(KERN_INFO "spfs_read()\n");
 
@@ -574,7 +579,7 @@ spfs_read(struct file *file, char __user *buf, size_t len, loff_t *ppos) {
 
       if (bh_pos < bh->b_size) {
         con = MIN(len, spfs_sb_remaining(bh, bh_pos));
-        memcpy(/*dest*/ buf, /*src*/ bh->b_data + bh_pos, con);
+        copy_to_user(/*dest*/ buf, /*src*/ bh->b_data + bh_pos, con);
         bh_pos += con;
         buf += con;
         len -= con;
@@ -757,7 +762,7 @@ spfs_write(struct file *file, const char __user *buf, size_t len,
         con = MIN(len, spfs_sb_remaining(bh, bh_pos));
 
         if (con > 0) {
-          memcpy(/*dest*/ bh->b_data + bh_pos, /*src*/ buf, con);
+          copy_from_user(/*dest*/ bh->b_data + bh_pos, /*src*/ buf, con);
           buf += con;
           len -= con;
           bh_pos += con;

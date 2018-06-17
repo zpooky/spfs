@@ -214,7 +214,8 @@ bnode_bin_find_gte(struct spfs_btree *self, struct spfs_bnode *node,
 
   // TODO should find gte not only e;
   while (it < end) {
-    struct spfs_bentry *mid = it + (spfs_ptr_length(it, end) / 2);
+    size_t length = spfs_ptr_length(it, end);
+    struct spfs_bentry *mid = it + (length / 2);
     if (spfs_inode_cmp(mid, /*>*/ needle)) {
       end = mid;
     } else {
@@ -586,7 +587,6 @@ btree_insert(struct spfs_btree *self, struct spfs_bnode *tree,
     index = bnode_index_of(self, tree, gte);
     BUG_ON(index == bnode_capacity(self));
 
-    // TODO sb buffer map child
     child = bnode_get_child(tree, index);
     /*MMAP child*/ {
       struct buffer_head *bh;
@@ -656,7 +656,12 @@ btree_fixup(struct spfs_btree *self, struct spfs_bnode *tree,
             struct btree_bubble *bubble) {
   spfs_be_id med;
   sector_t right;
-  struct super_block *sb = self->sb;
+  struct super_block *sb;
+
+  BUG_ON(!self);
+  BUG_ON(!self->sb);
+
+  sb = self->sb;
 
   BUG_ON(!bubble_is_active(bubble));
   BUG_ON(!self);
@@ -676,7 +681,6 @@ btree_fixup(struct spfs_btree *self, struct spfs_bnode *tree,
   /* split tree into two */
   med = bnode_median(tree, &bubble->entry);
 
-  // TODO read buffer
   right = spfs_free_alloc(self->free_list, self->blocks);
   BUG_ON(!right); // XXX
 
@@ -822,6 +826,6 @@ spfs_btree_insert(struct spfs_btree *self, struct spfs_inode *in) {
 int
 spfs_btree_remove(struct spfs_btree *tree, spfs_id ino) {
   BUG();
-  // TODO
+  // XXX
   return 1;
 }
