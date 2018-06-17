@@ -1,6 +1,9 @@
 #ifndef _SP_FS_UTIL_H
 #define _SP_FS_UTIL_H
 
+
+#include <linux/buffer_head.h>
+
 extern unsigned int
 spfs_sb_remaining(struct buffer_head *bh, unsigned int pos);
 

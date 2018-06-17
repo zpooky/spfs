@@ -1,4 +1,7 @@
 #include "free_list.h"
+#include "util.h"
+#include <linux/buffer_head.h>
+#include <linux/slab.h> /* kzalloc */
 
 /* ===================================== */
 static struct spfs_free_node *
@@ -29,7 +32,7 @@ spfs_init_free_list_entry(struct buffer_head *bh, unsigned int *bh_pos) {
 
 int
 spfs_free_init(struct super_block *sb, struct spfs_free_list *list,
-                    sector_t head) {
+               sector_t head) {
   mutex_init(&list->lock);
   list->root = NULL;
   list->blocks = 0;
@@ -84,26 +87,13 @@ Lit:
 }
 
 /* ===================================== */
-static size_t
-spfs_blocks_for(size_t block_size, size_t len) {
-  // TODO
-  return 0;
-}
 
 sector_t
-spfs_free_alloc(struct super_block *sb, size_t len) {
+spfs_free_alloc(struct spfs_free_list *free_list, size_t blocks) {
   // TODO support small return < len so that calller invokes f_file_alloc
   // multiple time
-  struct spfs_super_block *sbi = sb->s_fs_info;
-  struct spfs_free_list *free_list;
-  const size_t blocks = spfs_blocks_for(sbi->block_size, len);
   sector_t result = 0;
 
-  if (len == 0) {
-    return result;
-  }
-
-  free_list = &sbi->free_list;
   {
     struct spfs_free_node *list;
     mutex_lock(&free_list->lock);
@@ -127,34 +117,11 @@ spfs_free_alloc(struct super_block *sb, size_t len) {
     mutex_unlock(&free_list->lock);
   }
 
-  if (result) {
-    unsigned int b_pos = 0;
-    struct buffer_head *bh;
-
-    bh = sb_bread(sb, result);
-    BUG_ON(!bh);
-
-    /* Make file header */
-    /* [next:u32,cap:u32,length:u32,raw:cap] */
-    if (!spfs_sb_write_u32(bh, &b_pos, 0)) {
-      BUG();
-    }
-    if (!spfs_sb_write_u32(bh, &b_pos, blocks)) {
-      BUG();
-    }
-    if (!spfs_sb_write_u32(bh, &b_pos, 0)) {
-      BUG();
-    }
-
-    mark_buffer_dirty(bh); // TODO maybe sync?
-    brelse(bh);
-  }
-
   return result;
 }
 
 /* ===================================== */
 int
-spfs_free_dealloc(struct super_block *sb, sector_t root, size_t blocks) {
+spfs_free_dealloc(struct spfs_free_list *fl, sector_t root, size_t blocks) {
   return 0;
 }

@@ -42,6 +42,11 @@ static const struct inode_operations spfs_inode_ops;
 static const struct file_operations spfs_file_ops;
 static const struct file_operations spfs_dir_ops;
 
+/*
+ * TODO optimize sb_bread without reading for block device when we are not
+ * interested in the content of the read, we only want to overwrite all content
+ */
+
 //=====================================
 static int
 spfs_convert_from_inode(struct spfs_inode *dest, struct inode *src,
@@ -87,7 +92,7 @@ spfs_priv_inode_init(struct inode *in, spfs_offset start) {
   result->left = NULL;
   result->right = NULL;
 
-  // TODO add callback when inode gets destroyed to cleanup i_private
+  // TODO add callback when inode gets destroyed to clean-up i_private
   in->i_private = result;
 
   return result;
@@ -605,6 +610,56 @@ spfs_modify_start_cb(void *closure, struct spfs_inode *entry) {
   return true;
 }
 
+/* const size_t blocks = spfs_blocks_for(sbi->block_size, len); */
+static size_t
+spfs_blocks_for(struct spfs_super_block *sbi, size_t len) {
+  // TODO
+  return 0;
+}
+
+static sector_t
+spfs_file_block_alloc(struct super_block *sb, size_t len) {
+  struct spfs_super_block *sbi;
+  size_t blocks;
+  sector_t result;
+
+  if (len == 0) {
+    return 0;
+  }
+
+  sbi = sb->s_fs_info;
+
+  BUG_ON(!sbi);
+
+  blocks = spfs_blocks_for(sbi, len);
+  result = spfs_free_alloc(&sbi->free_list, blocks);
+
+  if (result) {
+    unsigned int b_pos = 0;
+    struct buffer_head *bh;
+
+    bh = sb_bread(sb, result);
+    BUG_ON(!bh);
+
+    /* Make file header */
+    /* [next:u32,cap:u32,length:u32,raw:cap] */
+    if (!spfs_sb_write_u32(bh, &b_pos, 0)) {
+      BUG();
+    }
+    if (!spfs_sb_write_u32(bh, &b_pos, blocks)) {
+      BUG();
+    }
+    if (!spfs_sb_write_u32(bh, &b_pos, 0)) {
+      BUG();
+    }
+
+    mark_buffer_dirty(bh); // XXX maybe sync?
+    brelse(bh);
+  }
+
+  return result;
+}
+
 /*
  * Sends data to the device. If missing, -EINVAL is returned to the program
  * calling the write system call. The return value, if non-negative, represents
@@ -725,7 +780,7 @@ spfs_write(struct file *file, const char __user *buf, size_t len,
           *ppos = file_length;
           pos = 0;
 
-          block_next = spfs_free_alloc(sb, len);
+          block_next = spfs_file_block_alloc(sb, len);
           if (!block_next) {
             // TODO release
             return -EINVAL;
@@ -748,8 +803,7 @@ spfs_write(struct file *file, const char __user *buf, size_t len,
       start = block_next;
       goto Lit;
     } else {
-
-      start = spfs_free_alloc(sb, len);
+      start = spfs_file_block_alloc(sb, len);
       if (!start) {
         // TODO release
         return -EINVAL;

@@ -6,6 +6,7 @@
 #include <linux/types.h>
 #include <stddef.h>
 
+#include "free_list.h"
 #include "spfs.h"
 
 // TODO use numeric 0:success otherwise:fail
@@ -15,6 +16,7 @@ typedef bool (*btree_modify_cb)(void *, struct spfs_inode *);
 
 struct spfs_btree {
   struct super_block *sb;
+  struct spfs_free_list *free_list;
   struct mutex lock;
 
   /* block { */
@@ -22,8 +24,6 @@ struct spfs_btree {
   size_t blocks;
   sector_t start;
   /* } */
-
-  struct spfs_inode *dummy;
 };
 
 extern int

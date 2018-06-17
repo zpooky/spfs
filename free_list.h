@@ -6,6 +6,8 @@
 #include <linux/mutex.h>
 #include <linux/types.h>
 
+#include "spfs.h"
+
 struct spfs_free_node {
   sector_t start;
   size_t blocks;
@@ -20,12 +22,12 @@ struct spfs_free_list {
 
 extern int
 spfs_free_init(struct super_block *sb, struct spfs_free_list *list,
-                    sector_t head);
+               sector_t head);
 
 extern sector_t
-spfs_free_alloc(struct super_block *sb, size_t len);
+spfs_free_alloc(struct spfs_free_list *fl, size_t blocks);
 
 extern int
-spfs_free_dealloc(struct super_block *sb, sector_t root, size_t blocks);
+spfs_free_dealloc(struct spfs_free_list *fl, sector_t root, size_t blocks);
 
 #endif

@@ -1,5 +1,4 @@
 #include "btree.h"
-#include "free_list.h"
 #include "sp.h"
 #include "util.h"
 
@@ -58,7 +57,10 @@ spfs_btree_init(struct super_block *sb, struct spfs_btree *tree,
 
   sbi = sb->s_fs_info;
 
+  BUG_ON(!sbi);
+
   tree->sb = sb;
+  tree->free_list = &sbi->free_list;
   mutex_init(&tree->lock);
 
   /* block { */
@@ -67,7 +69,6 @@ spfs_btree_init(struct super_block *sb, struct spfs_btree *tree,
   tree->start = start;
   /* } */
 
-  tree->dummy = NULL;
   /*XXX btree magic*/
 
   return 0;
@@ -540,7 +541,7 @@ btree_insert(struct spfs_btree *self, struct spfs_bnode *tree,
 
   if (!tree) {
     struct buffer_head *bh;
-    sector_t page = spfs_free_alloc(sb, self->block_size);
+    sector_t page = spfs_free_alloc(self->free_list, self->blocks);
     if (!page) {
       return 1;
     }
@@ -676,7 +677,7 @@ btree_fixup(struct spfs_btree *self, struct spfs_bnode *tree,
   med = bnode_median(tree, &bubble->entry);
 
   // TODO read buffer
-  right = spfs_free_alloc(sb, self->blocks);
+  right = spfs_free_alloc(self->free_list, self->blocks);
   BUG_ON(!right); // XXX
 
   {
@@ -731,7 +732,7 @@ bnode_alloc_root(struct spfs_btree *self, struct btree_bubble *bubble) {
   const sector_t less = self->start;
   sb = self->sb;
 
-  root = spfs_free_alloc(sb, self->blocks);
+  root = spfs_free_alloc(self->free_list, self->blocks);
   if (!root) {
     res = -ENOMEM;
     goto Lret;
@@ -764,7 +765,7 @@ bnode_alloc_root(struct spfs_btree *self, struct btree_bubble *bubble) {
   goto Lrelease;
 
 Lfree:
-  spfs_free_dealloc(sb, root, self->blocks);
+  spfs_free_dealloc(self->free_list, root, self->blocks);
 
 Lrelease:
   if (bh) {

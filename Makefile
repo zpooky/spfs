@@ -1,5 +1,5 @@
 obj-m := spfs.o
-spfs-objs := sp.o btree.o
+spfs-objs := sp.o btree.o free_list.o util.o
 ccflags-y := -DSPFS_DEBUG
 
 MKFS := mkfs.spfs
