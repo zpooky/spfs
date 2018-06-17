@@ -943,7 +943,7 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
     goto Lerr;
   }
 
-  res = spfs_init_free_list(sb, &sbi->free_list, free_start);
+  res = spfs_free_init(sb, &sbi->free_list, free_start);
   if (res) {
     goto Lerr;
   }

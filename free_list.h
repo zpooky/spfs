@@ -19,7 +19,7 @@ struct spfs_free_list {
 };
 
 extern int
-spfs_init_free_list(struct super_block *sb, struct spfs_free_list *list,
+spfs_free_init(struct super_block *sb, struct spfs_free_list *list,
                     sector_t head);
 
 extern sector_t

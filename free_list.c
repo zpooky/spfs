@@ -28,7 +28,7 @@ spfs_init_free_list_entry(struct buffer_head *bh, unsigned int *bh_pos) {
 }
 
 int
-spfs_init_free_list(struct super_block *sb, struct spfs_free_list *list,
+spfs_free_init(struct super_block *sb, struct spfs_free_list *list,
                     sector_t head) {
   mutex_init(&list->lock);
   list->root = NULL;
