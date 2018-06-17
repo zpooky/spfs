@@ -36,3 +36,19 @@ spfs_sb_write_u32(struct buffer_head *bh, unsigned int *pos, unsigned int val) {
 
   return true;
 }
+
+/* ===================================== */
+bool
+spfs_sb_read_str(struct buffer_head *bh, unsigned int *pos, char *str,
+                 size_t len) {
+  // TODO
+  return true;
+}
+
+/* ===================================== */
+bool
+spfs_sb_write_str(struct buffer_head *bh, unsigned int *pos, const char *str,
+                  size_t len) {
+  // TODO
+  return true;
+}

@@ -51,6 +51,8 @@ spfs_convert_from_inode(struct spfs_inode *dest, struct inode *src,
   BUG_ON(!dest);
   BUG_ON(!src);
 
+  // TODO all fields
+
   if (n_length > sizeof(dest->name)) {
     return 1;
   }
@@ -60,9 +62,9 @@ spfs_convert_from_inode(struct spfs_inode *dest, struct inode *src,
   dest->id = src->i_ino;
 
   if (S_ISDIR(mode)) {
-    dest->children_start = 0;
+    dest->start = 0;
   } else if (S_ISREG(mode)) {
-    dest->file_start = 0;
+    dest->start = 0;
   } else {
     BUG();
   }
@@ -98,6 +100,7 @@ spfs_convert_to_inode(struct super_block *sb, const struct spfs_inode *src,
   umode_t mode = src->mode;
   spfs_offset off_start = 0;
 
+  // TODO all fields
   BUG_ON(!sb);
 
   inode = new_inode(sb);
@@ -105,14 +108,12 @@ spfs_convert_to_inode(struct super_block *sb, const struct spfs_inode *src,
     inode->i_ino = src->id;
     inode->i_op = &spfs_inode_ops;
 
+    off_start = src->start;
+
     if (S_ISDIR(mode)) {
       inode->i_fop = &spfs_dir_ops;
-      off_start = src->children_start;
-
     } else if (S_ISREG(mode)) {
       inode->i_fop = &spfs_file_ops;
-      off_start = src->file_start;
-
     } else {
       printk(KERN_INFO "BUG(), mode[%u], name[%s]", mode, src->name);
       BUG();
@@ -323,7 +324,7 @@ spfs_for_all_children(struct inode *parent, void *closure, for_all_cb f) {
       return false;
     }
 
-    child_list = entry.children_start;
+    child_list = entry.start;
 
     BUG_ON(!S_ISDIR(entry.mode));
   }
@@ -597,9 +598,9 @@ spfs_modify_start_cb(void *closure, struct spfs_inode *entry) {
   spfs_offset start = *((spfs_offset *)closure);
 
   BUG_ON(!S_ISREG(entry->mode));
-  BUG_ON(entry->file_start != 0);
+  BUG_ON(entry->start != 0);
 
-  entry->file_start = start;
+  entry->start = start;
 
   return true;
 }

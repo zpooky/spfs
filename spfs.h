@@ -23,25 +23,29 @@ struct spfs_super_block_wire {
   // char dummy[SPOOKY_FS_BLOCK_SIZE - (sizeof(unsigned int) * 2)];
 };
 
-// #define spfs_entry_kind_file 1
-// #define spfs_entry_kind_dir 2
+// __be32	di_size;
+// __be32	di_gid;
+// __be32	di_uid;
+// __be32	di_mode;
+// __be64	di_ctime;
 
 struct spfs_inode {
   spfs_id id;
+  unsigned int size;
+  mode_t mode;
+
+  unsigned int gid;
+  unsigned int uid;
 
   unsigned int atime;
   unsigned int mtime;
   unsigned int ctime;
 
-  mode_t mode;
+  // spfs_offset children_start;
+  // spfs_offset file_start;
+  spfs_offset start;
 
   char name[SPOOKY_FS_NAME_MAX];
-  // TAG either file or dir
-  int kind;
-  union {
-    spfs_offset children_start;
-    spfs_offset file_start;
-  };
 };
 
 #endif

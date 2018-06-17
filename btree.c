@@ -1,6 +1,7 @@
 #include "btree.h"
 #include "free_list.h"
 #include "sp.h"
+#include "util.h"
 
 #include <linux/buffer_head.h>
 
@@ -227,6 +228,12 @@ bnode_bin_find_gte(struct spfs_btree *self, struct spfs_bnode *node,
   return NULL;
 }
 
+static struct spfs_bentry *
+bnode_bin_insert(struct spfs_bnode *node, struct btree_bubble *bubble) {
+  // TODO
+  return NULL;
+}
+
 static size_t
 bnode_index_of(struct spfs_btree *self, struct spfs_bnode *node,
                struct spfs_bentry *needle) {
@@ -251,14 +258,100 @@ bnode_index_of(struct spfs_btree *self, struct spfs_bnode *node,
 
 static int
 spfs_inode_parse(struct buffer_head *bh, struct spfs_inode *out) {
-  // TODO
+  // XXX magic
+  unsigned int pos = 0;
+  if (!spfs_sb_read_u32(bh, &pos, &out->id)) {
+    return -EIO;
+  }
+  if (!spfs_sb_read_u32(bh, &pos, &out->size)) {
+    return -EIO;
+  }
+  if (!spfs_sb_read_u32(bh, &pos, &out->mode)) {
+    return -EIO;
+  }
+
+  {
+    if (!spfs_sb_read_u32(bh, &pos, &out->gid)) {
+      return -EIO;
+    }
+
+    if (!spfs_sb_read_u32(bh, &pos, &out->uid)) {
+      return -EIO;
+    }
+  }
+
+  {
+    if (!spfs_sb_read_u32(bh, &pos, &out->atime)) {
+      return -EIO;
+    }
+
+    if (!spfs_sb_read_u32(bh, &pos, &out->mtime)) {
+      return -EIO;
+    }
+
+    if (!spfs_sb_read_u32(bh, &pos, &out->ctime)) {
+      return -EIO;
+    }
+  }
+
+  if (!spfs_sb_read_u32(bh, &pos, &out->start)) {
+    return -EIO;
+  }
+
+  if (!spfs_sb_read_str(bh, &pos, out->name, sizeof(out->name))) {
+    return -EIO;
+  }
+
   return 0;
 }
 
 static int
-spfs_inode_make(struct super_block *sb, spfs_inode_sector page,
-                const struct spfs_inode *in) {
-  // TODO
+spfs_inode_make(struct buffer_head *bh, const struct spfs_inode *in) {
+  // XXX magic
+  unsigned int pos = 0;
+
+  if (!spfs_sb_write_u32(bh, &pos, in->id)) {
+    return -EIO;
+  }
+  if (!spfs_sb_write_u32(bh, &pos, in->size)) {
+    return -EIO;
+  }
+  if (!spfs_sb_write_u32(bh, &pos, in->mode)) {
+    return -EIO;
+  }
+
+  {
+    if (!spfs_sb_write_u32(bh, &pos, in->gid)) {
+      return -EIO;
+    }
+
+    if (!spfs_sb_write_u32(bh, &pos, in->uid)) {
+      return -EIO;
+    }
+  }
+
+  {
+    if (!spfs_sb_write_u32(bh, &pos, in->atime)) {
+      return -EIO;
+    }
+
+    if (!spfs_sb_write_u32(bh, &pos, in->mtime)) {
+      return -EIO;
+    }
+
+    if (!spfs_sb_write_u32(bh, &pos, in->ctime)) {
+      return -EIO;
+    }
+  }
+
+  if (!spfs_sb_write_u32(bh, &pos, in->start)) {
+    return -EIO;
+  }
+
+  if (!spfs_sb_write_str(bh, &pos, in->name, sizeof(in->name))) {
+    return -EIO;
+  }
+
   return 0;
 }
 
@@ -282,17 +375,17 @@ btree_visit_entry(struct super_block *sb, spfs_inode_sector offset,
 
   res = spfs_inode_parse(bh, &cur);
   if (res) {
-    brelse(bh);
-    return res;
+    goto Lout;
   }
 
   if (cb(closure, &cur)) {
+    spfs_inode_make(bh, &cur);
     mark_buffer_dirty(bh);
   }
 
+Lout:
   brelse(bh);
-
-  return 0;
+  return res;
 }
 
 int
@@ -392,12 +485,6 @@ bnode_is_empty(const struct spfs_bnode *tree) {
   return bnode_get_length(tree) == 0;
 }
 
-static struct spfs_bentry *
-bnode_bin_insert(struct spfs_bnode *node, struct btree_bubble *bubble) {
-  // TODO
-  return NULL;
-}
-
 static sector_t *
 bnode_child_insert(struct spfs_bnode *node, sector_t child) {
   // TODO
@@ -445,14 +532,21 @@ btree_insert(struct spfs_btree *self, struct spfs_bnode *tree,
   memset(bubble, 0, sizeof(*bubble));
 
   if (!tree) {
+    struct buffer_head *bh;
     sector_t page = spfs_free_alloc(sb, self->block_size);
     if (!page) {
       return 1;
     }
 
-    res = spfs_inode_make(sb, page, in);
+    bh = sb_bread(sb, page);
+    if (!bh) {
+      // cleanup
+      return -EIO;
+    }
+
+    res = spfs_inode_make(bh, in);
     if (res) {
-      // XXX page reclaim
+      // cleanup
       return res;
     }
     *out = page;
@@ -461,6 +555,8 @@ btree_insert(struct spfs_btree *self, struct spfs_bnode *tree,
     bubble->entry.id = in->id;
     bubble->entry.offset = page;
     bubble->greater = 0;
+
+    brelse(bh);
 
     /* return std::make_tuple(bubble, greater); */
     return 0;
