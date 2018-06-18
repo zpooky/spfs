@@ -931,7 +931,7 @@ spfs_super_block_init(struct super_block *sb, struct spfs_super_block *super,
 
   mutex_init(&super->id_lock);
 
-  res = spfs_super_block(bh, super);
+  res = spfs_read_super_block(bh, super);
   if (res) {
     goto Lrelease;
   }
@@ -950,7 +950,7 @@ spfs_super_block_init(struct super_block *sb, struct spfs_super_block *super,
 
   res = 0;
 Lrelease:
-  brese(bh);
+  brelse(bh);
   return res;
 }
 
