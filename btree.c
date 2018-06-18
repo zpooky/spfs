@@ -591,13 +591,29 @@ bnode_child_add_back(struct spfs_bnode *node, sector_t child) {
 
 static struct spfs_bentry *
 bnode_median(struct spfs_btree *self, struct spfs_bnode *tree,
-             struct spfs_bentry *entry) {
+             struct spfs_bentry *extra) {
   u32 length;
-  BUG_ON(!bnode_is_full(self, tree));
-  length = bnode_length(tree);
+  u32 mid;
+  struct spfs_bentry *mid_entry;
+  struct spfs_bentry *mid_priv_entry;
 
-  // TODO
-  return 0;
+  BUG_ON(!bnode_is_full(self, tree));
+
+  length = bnode_length(tree) + 1;
+  mid = length / 2;
+  BUG_ON(mid == 0);
+  mid_entry = bnode_get_entry(tree, mid);
+
+  if (spfs_be_id_cmp(extra->id, /*>*/ mid_entry->id)) {
+    return mid_entry;
+  }
+
+  mid_priv_entry = mid_entry - 1;
+  if (spfs_be_id_cmp(extra->id, /*>*/ mid_priv_entry->id)) {
+    return extra;
+  }
+
+  return mid_priv_entry;
 }
 
 static int
@@ -657,7 +673,6 @@ bnode_partition(struct spfs_btree *self, struct spfs_bnode *from,
 /*
  * static struct spfs_bentry *
  * bnode_bin_search(struct spfs_bnode *tree, spfs_id needle) {
- *   // TODO
  *   return NULL;
  * }
  */
