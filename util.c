@@ -38,6 +38,21 @@ spfs_sb_write_u32(struct buffer_head *bh, unsigned int *pos, unsigned int val) {
 }
 
 /* ===================================== */
+extern bool
+spfs_sb_read_sector_t(struct buffer_head *bh, unsigned int *pos,
+                      sector_t *out) {
+  // TODO
+  return true;
+}
+
+extern bool
+spfs_sb_write_sector_t(struct buffer_head *bh, unsigned int *pos,
+                       sector_t val) {
+  // TODO
+  return true;
+}
+
+/* ===================================== */
 bool
 spfs_sb_read_str(struct buffer_head *bh, unsigned int *pos, char *str,
                  size_t len) {

@@ -619,11 +619,15 @@ spfs_modify_start_cb(void *closure, struct spfs_inode *entry) {
   return true;
 }
 
-/* const size_t blocks = spfs_blocks_for(sbi->block_size, len); */
 static size_t
-spfs_blocks_for(struct spfs_super_block *sbi, size_t len) {
-  // TODO
-  return 0;
+spfs_blocks_for(const struct spfs_super_block *sbi, size_t len) {
+  size_t result = 0;
+  while (len) {
+    result++;
+    len -= MIN(len, sbi->block_size);
+  }
+
+  return result;
 }
 
 static sector_t
@@ -891,7 +895,6 @@ spfs_read_super_block(struct buffer_head *bh, struct spfs_super_block *super) {
   unsigned int pos;
 
   res = -EINVAL;
-
   pos = 0;
   if (spfs_sb_read_u32(bh, &pos, &super->magic)) {
     goto Lout;
@@ -906,6 +909,9 @@ spfs_read_super_block(struct buffer_head *bh, struct spfs_super_block *super) {
     goto Lout;
   }
   if (spfs_sb_read_u32(bh, &pos, &super->root_id)) {
+    goto Lout;
+  }
+  if (spfs_sb_read_sector_t(bh, &pos, &super->btree_offset)) {
     goto Lout;
   }
 
@@ -961,8 +967,7 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
   int res;
 
   const spfs_offset super_start = 0;
-  const spfs_offset btree_start = super_start + 1;
-  const spfs_offset free_start = btree_start + 1;
+  const spfs_offset free_start = super_start + 1;
 
   printk(KERN_INFO "spfs_kill_super_block()\n");
 
@@ -995,7 +1000,7 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
     goto Lerr;
   }
 
-  res = spfs_btree_init(sb, &sbi->tree, btree_start);
+  res = spfs_btree_init(sb, &sbi->tree, sbi->btree_offset);
   if (res) {
     goto Lerr;
   }

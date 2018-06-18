@@ -5,14 +5,16 @@
 #include <linux/types.h>
 #include <stddef.h>
 
-#include "free_list.h"
 #include "btree.h"
+#include "free_list.h"
 #include "spfs.h"
 
 struct spfs_super_block {
   unsigned int version;
   unsigned int magic;
   unsigned int block_size;
+
+  sector_t btree_offset;
 
   spfs_id id;
   struct mutex id_lock; // TODO spin lock

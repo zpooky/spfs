@@ -61,8 +61,11 @@ super_block(int fd, const struct spfs_super_block_wire *super) {
   }
   if (mkfs_write_u32(buffer, &pos, super->id)) {
     return 1;
-  }
+  } // TODO define size of inode
   if (mkfs_write_u32(buffer, &pos, super->root_id)) {
+    return 1;
+  }
+  if (mkfs_write_u32(buffer, &pos, super->btree)) { // TODO define size
     return 1;
   }
 
@@ -77,7 +80,7 @@ super_block(int fd, const struct spfs_super_block_wire *super) {
 
 static int
 free_list(int fd, const struct spfs_super_block_wire *super) {
-  const spfs_offset start_sector = 3;
+  const spfs_offset start_sector = 2; // TODO change & define better
   const spfs_offset start = (SPOOKY_FS_BLOCK_SIZE * start_sector);
   struct stat s;
   unsigned char buffer[1024];
@@ -137,11 +140,6 @@ free_list(int fd, const struct spfs_super_block_wire *super) {
   return 0;
 }
 
-static int
-btree_root(int fd, const struct spfs_super_block_wire *super) {
-  return zero_fill(fd, super->block_size);
-}
-
 int
 main(int argc, const char **args) {
   int res = 1;
@@ -161,15 +159,11 @@ main(int argc, const char **args) {
         .block_size = SPOOKY_FS_BLOCK_SIZE,
         .id = SPFS_ROOT_INODE_NO,
         .root_id = SPFS_ROOT_INODE_NO,
+        .btree = 0,
     };
 
     if (super_block(fd, &super)) {
       fprintf(stderr, "failed to write superblock: '%s'\n", device);
-      goto Ldone;
-    }
-
-    if (btree_root(fd, &super)) {
-      fprintf(stderr, "failed to write btree_root: '%s'\n", device);
       goto Ldone;
     }
 

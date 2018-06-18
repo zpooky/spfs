@@ -20,6 +20,8 @@ struct spfs_super_block_wire {
   spfs_id id;
   spfs_id root_id;
 
+  spfs_offset btree;
+
   // TODO spfs_super_block should occopy 4096 on disk but not in memory
   // char dummy[SPOOKY_FS_BLOCK_SIZE - (sizeof(unsigned int) * 2)];
 };

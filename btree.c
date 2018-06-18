@@ -978,9 +978,10 @@ Lret:
 
 int
 spfs_btree_insert(struct spfs_btree *self, struct spfs_inode *in) {
+  struct spfs_bnode tree = {};
+  struct spfs_bnode *tree_ptr;
   int res;
   struct buffer_head *bh;
-  struct spfs_bnode tree = {};
   struct btree_bubble bubble;
   struct super_block *sb;
   spfs_inode_sector out;
@@ -988,25 +989,30 @@ spfs_btree_insert(struct spfs_btree *self, struct spfs_inode *in) {
   sb = self->sb;
   /* Result as the location of the inserted entry. */
   out = 0;
+
+  bh = NULL;
+  tree_ptr = NULL;
   memset(&bubble, 0, sizeof(bubble));
 
-  if (!self->start) {
-    BUG();
-    return -EIO;
+  if (self->start) {
+    bh = sb_bread(sb, self->start);
+    if (!bh) {
+      return -EIO;
+    }
+
+    if (bnode_parse(self, bh, &tree)) {
+      brelse(bh);
+      return -EINVAL;
+    }
+    tree_ptr = &tree;
   }
 
-  bh = sb_bread(sb, self->start);
-  if (!bh) {
-    return -EIO;
-  }
+  res = btree_insert(self, tree_ptr, in, &bubble, &out);
 
-  if (bnode_parse(self, bh, &tree)) {
+  if (bh) {
+    /* invalidates $tree */
     brelse(bh);
-    return -EINVAL;
   }
-
-  res = btree_insert(self, &tree, in, &bubble, &out);
-  brelse(bh); /*invalidates tree*/
 
   if (bubble_is_active(&bubble)) {
     int nres;
