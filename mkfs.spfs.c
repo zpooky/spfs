@@ -14,6 +14,8 @@
 
 #include "spfs.h"
 
+#define SPOOKY_FS_BLOCK_SIZE 4096
+
 static int
 zero_fill(int fd, size_t bytes) {
   size_t i = 0;
@@ -48,10 +50,10 @@ super_block(int fd, const struct spfs_super_block_wire *super) {
   unsigned char buffer[1024];
   ssize_t pos = 0;
 
-  if (mkfs_write_u32(buffer, &pos, super->version)) {
+  if (mkfs_write_u32(buffer, &pos, super->magic)) {
     return 1;
   }
-  if (mkfs_write_u32(buffer, &pos, super->magic)) {
+  if (mkfs_write_u32(buffer, &pos, super->version)) {
     return 1;
   }
   if (mkfs_write_u32(buffer, &pos, super->block_size)) {

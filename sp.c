@@ -886,8 +886,38 @@ static const struct file_operations spfs_dir_ops = {
 };
 //=====================================
 static int
+spfs_read_super_block(struct buffer_head *bh, struct spfs_super_block *super) {
+  int res;
+  unsigned int pos;
+
+  res = -EINVAL;
+
+  pos = 0;
+  if (spfs_sb_read_u32(bh, &pos, &super->magic)) {
+    goto Lout;
+  }
+  if (spfs_sb_read_u32(bh, &pos, &super->version)) {
+    goto Lout;
+  }
+  if (spfs_sb_read_u32(bh, &pos, &super->block_size)) {
+    goto Lout;
+  }
+  if (spfs_sb_read_u32(bh, &pos, &super->id)) {
+    goto Lout;
+  }
+  if (spfs_sb_read_u32(bh, &pos, &super->root_id)) {
+    goto Lout;
+  }
+
+  res = 0;
+Lout:
+  return res;
+}
+
+static int
 spfs_super_block_init(struct super_block *sb, struct spfs_super_block *super,
                       sector_t start) {
+  int res;
   struct buffer_head *bh;
 
   BUG_ON(!sb);
@@ -899,70 +929,30 @@ spfs_super_block_init(struct super_block *sb, struct spfs_super_block *super,
     return -EIO;
   }
 
-  if (bh->b_size < sizeof(*super)) {
-    printk(KERN_INFO "bh->b_size:%zu < sizeof(*super):%zu\n", //
-           bh->b_size, sizeof(*super));
-    brelse(bh);
-    return -EIO;
+  mutex_init(&super->id_lock);
+
+  res = spfs_super_block(bh, super);
+  if (res) {
+    goto Lrelease;
   }
-
-  {
-    unsigned int pos = 0;
-    mutex_init(&super->id_lock);
-    /* struct spfs_super_block_wire wire; */
-    /* memcpy(#<{(|DEST|)}># &wire, #<{(|SRC|)}># bh->b_data, sizeof(wire)); */
-
-    /* super->version = be32_to_cpu(wire.version); */
-    /* super->magic = be32_to_cpu(wire.magic); */
-    /* super->block_size = be32_to_cpu(wire.block_size); */
-    /* super->id = be32_to_cpu(wire.id); */
-    /* super->root_id = be32_to_cpu(wire.root_id); */
-
-    if (spfs_sb_read_u32(bh, &pos, &super->version)) {
-      return 1;
-    }
-    if (spfs_sb_read_u32(bh, &pos, &super->magic)) {
-      return 1;
-    }
-    if (spfs_sb_read_u32(bh, &pos, &super->block_size)) {
-      return 1;
-    }
-    if (spfs_sb_read_u32(bh, &pos, &super->id)) {
-      return 1;
-    }
-    if (spfs_sb_read_u32(bh, &pos, &super->root_id)) {
-      return 1;
-    }
-  }
-  brelse(bh);
 
   if (super->magic != SPOOKY_FS_MAGIC) {
     printk(KERN_INFO "super->magic[%u] != SPOOKY_FS_MAGIC[%u]\n", //
            super->magic, SPOOKY_FS_MAGIC);
-    return -ENOMEM;
+    res = -EINVAL;
+    goto Lrelease;
   }
 
-  if (super->block_size != SPOOKY_FS_BLOCK_SIZE) {
-    printk(KERN_INFO "super->block_size:%u != SPOOKY_FS_BLOCK_SIZE:%u\n", //
-           super->block_size, SPOOKY_FS_BLOCK_SIZE);
-    return -ENOMEM;
+  if (super->block_size < SPOOKY_FS_INITIAL_BLOCK_SIZE) {
+    res = -EINVAL;
+    goto Lrelease;
   }
 
-  return 0;
+  res = 0;
+Lrelease:
+  brese(bh);
+  return res;
 }
-
-/*
- * static unsigned char
- * get_bit_pos(unsigned long val) {
- *   // TODO document this
- *   unsigned char i;
- *
- *   for (i = 0; val; i++) {
- *     val >>= 1;
- *   }
- *   return (i - 1);
- * }
- */
 
 static int
 spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
@@ -987,8 +977,10 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
   /* sb->s_flags |= MS_NODIRATIME; */
   /* TODO document why we do this */
   sb->s_magic = SPOOKY_FS_MAGIC;
-  /* sb->s_blocksize_bits = get_bit_pos(sbi->block_size); */
-  sb->s_blocksize = SPOOKY_FS_BLOCK_SIZE;
+  if (sb_set_blocksize(sb, SPOOKY_FS_INITIAL_BLOCK_SIZE) == 0) {
+    res = -EINVAL;
+    goto Lerr;
+  }
 
   // TODO 1. hardcode blocksize to 512kb to be used by super_block
   // TODO 2. btree root should be dynamic not init in mkfs
@@ -999,7 +991,8 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
   }
 
   if (sb_set_blocksize(sb, sbi->block_size) == 0) {
-    return -EINVAL;
+    res = -EINVAL;
+    goto Lerr;
   }
 
   res = spfs_btree_init(sb, &sbi->tree, btree_start);
