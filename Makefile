@@ -4,7 +4,9 @@ ccflags-y := -DSPFS_DEBUG
 
 MKFS := mkfs.spfs
 OBJECTS := mkfs.spfs.o
-CXXFLAGS := -std=gnu89 -Wall -Werror -Wextra
+CFLAGS := -std=gnu89 -Wall -Werror -Wextra
+
+# CFLAGS_sp.o := -DDEBUG
 
 all: $(MKFS) ko
 
@@ -12,7 +14,7 @@ ko:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
 
 %.o: %.c
-	$(CC) $(CXXFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -c $< -o $@
 
 $(MKFS): $(OBJECTS)
 	$(CC) $(OBJECTS) -o $(MKFS)

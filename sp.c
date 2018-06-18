@@ -37,6 +37,10 @@
  * blkcnt_t is the type of the inode's block count.
  * - typedef u64 sector_t;
  * - typedef u64 blkcnt_t;
+ *
+ * #
+ * if (IS_ERR(ptr))
+ *   return PTR_ERR(ptr);
  */
 static const struct inode_operations spfs_inode_ops;
 static const struct file_operations spfs_file_ops;
@@ -882,7 +886,7 @@ static const struct file_operations spfs_dir_ops = {
 };
 //=====================================
 static int
-spfs_init_super_block(struct super_block *sb, struct spfs_super_block *super,
+spfs_super_block_init(struct super_block *sb, struct spfs_super_block *super,
                       sector_t start) {
   struct buffer_head *bh;
 
@@ -980,19 +984,23 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
   /* Filesystem private info */
   sb->s_fs_info = sbi;
   /*  */
-  sb->s_flags |= MS_NODIRATIME;
+  /* sb->s_flags |= MS_NODIRATIME; */
   /* TODO document why we do this */
   sb->s_magic = SPOOKY_FS_MAGIC;
   /* sb->s_blocksize_bits = get_bit_pos(sbi->block_size); */
   sb->s_blocksize = SPOOKY_FS_BLOCK_SIZE;
 
-  res = spfs_init_super_block(sb, sbi, super_start);
+  // TODO 1. hardcode blocksize to 512kb to be used by super_block
+  // TODO 2. btree root should be dynamic not init in mkfs
+  // TODO 3. free_list head should use the configured sbi->block_size
+  res = spfs_super_block_init(sb, sbi, super_start);
   if (res) {
     goto Lerr;
   }
 
-  // TODO sector_t index need to be consistent
-  sb->s_blocksize = sbi->block_size;
+  if (sb_set_blocksize(sb, sbi->block_size) == 0) {
+    return -EINVAL;
+  }
 
   res = spfs_btree_init(sb, &sbi->tree, btree_start);
   if (res) {
@@ -1013,6 +1021,9 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
     }
     sbi->root_id = root->i_ino;
   }
+  /**/
+  /* inode_init_owner(root, NULL, S_IFDIR); */
+  /**/
   sb->s_root = d_make_root(root);
 
   return 0;

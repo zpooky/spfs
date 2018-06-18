@@ -9,7 +9,8 @@ https://sysplay.in/blog/category/linux-device-drivers/
 super.c:hfs_fill_super()
   mdb.c:hfs_mdb_get(sb) # build fs, including btree & bitmaps
 
-# example
+# Resources
+- https://kukuruku.co/post/writing-a-file-system-in-linux-kernel/
 - https://github.com/krinkinmu/aufs
   https://kukuruku.co/post/teaching-the-file-system-to-read/
 
