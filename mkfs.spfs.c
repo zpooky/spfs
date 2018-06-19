@@ -64,8 +64,13 @@ mkfs_block_size(int fd, struct spfs_super_block_wire *super) {
   super->block_size = s.st_blksize;
   size_t start = mkfs_bytes_of(&s, header_blocks);
 
-  if (s.st_size < start) {
-    fprintf(stderr, "is to small [%zu]\n", s.st_size);
+  if (s.st_size < 0) {
+    return 1;
+  }
+
+  const size_t sz = s.st_size;
+  if (sz < start) {
+    fprintf(stderr, "is to small [%zu]\n", (size_t)s.st_size);
     return 1;
   }
 
@@ -75,7 +80,7 @@ mkfs_block_size(int fd, struct spfs_super_block_wire *super) {
   size_t hdd_block_size = s.st_blksize;
   printf("hdd block size[%zu], fs block size[%u]\n", //
          hdd_block_size, super->block_size);
-  printf("header[%u], data[%zu]\n", //
+  printf("header[%zu], data[%zu]\n", //
          start, length);
   printf("data blocks[%zu]\n", super->blocks);
 
@@ -116,7 +121,7 @@ mkfs_write_u32(unsigned char *buffer, ssize_t *pos, unsigned int value) {
 
 static int
 mkfs_write_u64(unsigned char *buffer, ssize_t *pos, unsigned long value) {
-  value = htonlll(value);
+  /* TODO value = htonll(value); */
 
   memcpy(buffer + *pos, &value, sizeof(value));
   *pos += sizeof(value);
@@ -178,7 +183,7 @@ super_block(int fd, const struct spfs_super_block_wire *super) {
 }
 
 static int
-mkfs_write_free_list_header(char *buffer, unsigned int *pos,
+mkfs_write_free_list_header(unsigned char *buffer, ssize_t *pos,
                             const struct spfs_free_list *header) {
   if (mkfs_write_u32(buffer, pos, /*length*/ header->magic)) {
     return 1;
@@ -194,12 +199,12 @@ mkfs_write_free_list_header(char *buffer, unsigned int *pos,
 }
 
 static int
-mkfs_write_free_entry(char *buffer, unsigned int *pos,
+mkfs_write_free_entry(unsigned char *buffer, ssize_t *pos,
                       const struct spfs_free_entry *entry) {
-  if (mkfs_write_offset(buffer, &b_pos, entry->start)) {
+  if (mkfs_write_offset(buffer, pos, entry->start)) {
     return 1;
   }
-  if (mkfs_write_u32(buffer, &b_pos, entry->blocks)) {
+  if (mkfs_write_u32(buffer, pos, entry->blocks)) {
     return 1;
   }
 
@@ -215,7 +220,7 @@ free_list(int fd, const struct spfs_super_block_wire *super) {
   struct spfs_free_list header = {
       /**/
       .magic = SPOOKY_FS_FL_MAGIC,
-      .entires = 1,
+      .entries = 1,
       .next = 0,
       /**/
   };
@@ -232,7 +237,7 @@ free_list(int fd, const struct spfs_super_block_wire *super) {
     return 1;
   }
 
-  if (mkfs_write_free_entry(buffer, &b_pos, &blocks)) {
+  if (mkfs_write_free_entry(buffer, &b_pos, &entry)) {
     return 1;
   }
 

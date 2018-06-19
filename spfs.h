@@ -11,7 +11,6 @@
 
 #define SPFS_ROOT_INODE_NO 1
 
-typedef unsigned long spfs_offset;
 typedef unsigned long spfs_ino;
 
 typedef spfs_ino spfs_be_ino;

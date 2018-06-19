@@ -5,10 +5,10 @@
 
 /* ===================================== */
 static int
-spfs_read_entry(struct buffer_head *bh, unsigned int *bh_pos,
+spfs_read_entry(struct buffer_head *bh, size_t *bh_pos,
                 struct spfs_free_node *result) {
 
-  if (!spfs_sb_read_u64(bh, bh_pos, &result->start)) {
+  if (!spfs_sb_read_u32(bh, bh_pos, &result->start)) {
     return 1;
   }
   if (!spfs_sb_read_u32(bh, bh_pos, &result->blocks)) {
@@ -19,7 +19,7 @@ spfs_read_entry(struct buffer_head *bh, unsigned int *bh_pos,
 }
 
 static struct spfs_free_node *
-spfs_init_free_list_entry(struct buffer_head *bh, unsigned int *bh_pos) {
+spfs_init_free_list_entry(struct buffer_head *bh, size_t *bh_pos) {
   struct spfs_free_node *result;
 
   result = kzalloc(sizeof(*result), GFP_KERNEL);
@@ -38,23 +38,23 @@ spfs_init_free_list_entry(struct buffer_head *bh, unsigned int *bh_pos) {
 }
 
 static int
-spfs_read_header(struct buffer_head *bh, unsigned int *bh_pos,
-                 unsigned int *length, spfs_offset next) {
-  unsigned int magic;
-  if (!spfs_sb_read_u32(bh, &bh_pos, magic)) {
+spfs_read_header(struct buffer_head *bh, size_t *bh_pos, unsigned long *length,
+                 sector_t *next) {
+  unsigned long magic;
+  if (!spfs_sb_read_u32(bh, bh_pos, &magic)) {
     return -EINVAL;
   }
 
   if (magic != SPOOKY_FS_FL_MAGIC) {
-    printk(KERN_INFO "invalid Free-List magic:[%u] expected:[%u]", //
+    printk(KERN_INFO "invalid Free-List magic:[%lu] expected:[%u]", //
            magic, SPOOKY_FS_FL_MAGIC);
     return -EINVAL;
   }
 
-  if (!spfs_sb_read_u32(bh, &bh_pos, length)) {
+  if (!spfs_sb_read_u32(bh, bh_pos, length)) {
     return -EINVAL;
   }
-  if (!spfs_sb_read_u64(bh, &bh_pos, next)) {
+  if (!spfs_sb_read_u32(bh, bh_pos, next)) {
     return -EINVAL;
   }
 
@@ -71,9 +71,12 @@ spfs_free_init(struct super_block *sb, struct spfs_free_list *list,
 
 Lit:
   if (head) {
+    unsigned long free_length;
+    sector_t free_next;
+
     unsigned int i = 0;
     struct buffer_head *bh;
-    unsigned int bh_pos = 0;
+    size_t bh_pos = 0;
 
     bh = sb_bread(sb, head);
     if (!bh) {
@@ -81,7 +84,7 @@ Lit:
       return 1;
     }
 
-    res = spfs_read_header(bh, bh_pos, list);
+    res = spfs_read_header(bh, &bh_pos, &free_length, &free_next);
     if (res) {
       // cleanup
       return res;
@@ -127,7 +130,7 @@ spfs_free_alloc(struct spfs_free_list *free_list, size_t blocks) {
 
     Lit:
       if (list) {
-        /* TODO handle 0 length node */
+        /* XXX handle 0 length node */
         if (list->blocks >= blocks) {
           list->blocks -= blocks;
           free_list->blocks -= blocks;

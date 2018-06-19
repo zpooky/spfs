@@ -6,10 +6,39 @@ spfs_sb_remaining(struct buffer_head *bh, size_t pos) {
   BUG_ON(pos > bh->b_size);
   return bh->b_size - pos;
 }
+/* ===================================== */
+
+extern bool
+spfs_sb_read_u16(struct buffer_head *bh, size_t *pos, unsigned short *out) {
+  if (spfs_sb_remaining(bh, *pos) < sizeof(*out)) {
+    return false;
+  }
+
+  memcpy(out, bh->b_data + *pos, sizeof(*out));
+  *out = be16_to_cpu(*out);
+
+  *pos += sizeof(*out);
+
+  return true;
+}
+
+extern bool
+spfs_sb_write_u16(struct buffer_head *bh, size_t *pos, unsigned short val) {
+  if (spfs_sb_remaining(bh, *pos) < sizeof(val)) {
+    return false;
+  }
+
+  val = cpu_to_be16(val);
+  memcpy(/*dest*/ bh->b_data + *pos, /*src*/ &val, sizeof(val));
+
+  *pos += sizeof(val);
+
+  return true;
+}
 
 /* ===================================== */
 bool
-spfs_sb_read_u32(struct buffer_head *bh, size_t *pos, u32 *out) {
+spfs_sb_read_u32(struct buffer_head *bh, size_t *pos, unsigned long *out) {
   if (spfs_sb_remaining(bh, *pos) < sizeof(*out)) {
     return false;
   }
@@ -24,7 +53,7 @@ spfs_sb_read_u32(struct buffer_head *bh, size_t *pos, u32 *out) {
 
 /* ===================================== */
 bool
-spfs_sb_write_u32(struct buffer_head *bh, size_t *pos, u32 val) {
+spfs_sb_write_u32(struct buffer_head *bh, size_t *pos, unsigned long val) {
   if (spfs_sb_remaining(bh, *pos) < sizeof(val)) {
     return false;
   }
