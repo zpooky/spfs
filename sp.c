@@ -56,12 +56,17 @@
  * free_entry[start: sector_t, blocks: u32]
  * free_list[length: u32, next_free_list: offset, free_entry:[length]]
  */
+
+#define SPFS_INODE(inode) ((spfs_inode *)inode)
+
 static const struct inode_operations spfs_inode_ops;
 static const struct file_operations spfs_file_ops;
 static const struct file_operations spfs_dir_ops;
+static const struct super_operations spfs_super_ops;
 
 /*
  * TODO KM unload write back
+ * TODO use sector_t instead of spfs_offset?
  *
  * XXX optimize sb_bread without reading for block device when we are not
  * interested in the content of the read, we only want to overwrite all content
@@ -173,7 +178,6 @@ spfs_inode_by_id(struct super_block *sb, struct dentry *d, spfs_ino ino) {
   struct spfs_inode entry;
 
   sbi = sb->s_fs_info;
-
   BUG_ON(!sbi);
 
   {
@@ -194,7 +198,6 @@ spfs_new_inode(struct super_block *sb, umode_t mode) {
   struct spfs_super_block *sbi;
   struct inode *inode;
 
-  BUG_ON(!sb);
   sbi = sb->s_fs_info;
   BUG_ON(!sbi);
 
@@ -520,10 +523,11 @@ static const struct inode_operations spfs_inode_ops = {
 #define MIN(f, s) (f) > (s) ? (s) : (f)
 
 struct spfs_file_block {
+  /* block id of next spfs_file_block */
   spfs_offset next;
-
-  /* length in no blocks */
+  /* capacity in number of blocks */
   u32 capacity;
+  /* length in number of bytes */
   u32 length;
 };
 
@@ -1048,6 +1052,7 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
   /* sb->s_flags |= MS_NODIRATIME; */
   /* TODO document why we do this */
   sb->s_magic = SPOOKY_FS_MAGIC;
+  sb->s_op = &spfs_super_ops;
   if (sb_set_blocksize(sb, SPOOKY_FS_INITIAL_BLOCK_SIZE) == 0) {
     res = -EINVAL;
     goto Lerr;
@@ -1084,7 +1089,7 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
   }
   /**/
   /* inode_init_owner(root, NULL, S_IFDIR); */
-  /**/
+  // doc
   sb->s_root = d_make_root(root);
 
   return 0;
@@ -1102,8 +1107,15 @@ spfs_mount(struct file_system_type *fs_type, int flags, const char *dev_name,
   return mount_bdev(fs_type, flags, dev_name, data, spfs_fill_super_block);
 }
 
+//=====================================
 static void
-spfs_kill_superblock(struct super_block *sb) {
+spfs_put_super(struct super_block *sb) {
+  /*
+   * XXX the same prototype for kill_sb & put_super
+   * when to use which?
+   *
+   * https://patchwork.kernel.org/patch/9654957/
+   */
   struct spfs_super_block *sbi;
 
   printk(KERN_INFO "spfs_kill_superblock()\n");
@@ -1115,20 +1127,163 @@ spfs_kill_superblock(struct super_block *sb) {
   }
 }
 
-struct file_system_type spfs_fs_type = {
+//=====================================
+static struct kmem_cache *spfs_inode_SLAB;
+
+//=====================================
+static struct inode *
+spfs_alloc_inode(struct super_block *sb) {
+  struct spfs_inode *inode;
+
+  inode = kmem_cache_alloc(spfs_inode_SLAB, GFP_KERNEL);
+
+  if (inode) {
+    return &inode->i_inode;
+  }
+
+  return NULL;
+}
+
+//=====================================
+static void
+spfs_free_inode_cb(struct rcu_head *head) {
+  struct inode *inode;
+
+  // doc
+  inode = container_of(head, struct inode, i_rcu);
+
+  BUG_ON(!inode);
+  BUG_ON(!spfs_inode_SLAB);
+
+  pr_debug("freeing inode %lu\n", (unsigned long)inode->i_ino);
+  kmem_cache_free(spfs_inode_SLAB, SPFS_INODE(inode));
+}
+
+static void
+spfs_free_inode(struct inode *inode) {
+  call_rcu(&inode->i_rcu, spfs_free_inode_cb);
+}
+
+//=====================================
+static void
+spfs_inode_init_once(void *closure) {
+  struct spfs_inode *inode = closure;
+
+  // doc
+  inode_init_once(&inode->i_inode);
+}
+
+static struct kmem_cache *
+spfs_create_inode_SLAB() {
+  // doc
+  return kmem_cache_create("spfs_inode_SLAB", sizeof(struct spfs_inode), 0,
+                           (SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD),
+                           spfs_inode_init_once);
+}
+
+//=====================================
+static void
+spfs_destroy_inode_SLAB(struct kmem_cache *slab) {
+  // doc
+  rcu_barrier();
+  if (slab) {
+    kmem_cache_destroy(slab);
+  }
+}
+
+//=====================================
+static bool
+spfs_mod_inode_cb(void *closure, struct spfs_inode *entry) {
+  struct inode *src = closure;
+
+  // TODO convert_from_inode(src, /*dest*/entry);
+
+  return true;
+}
+
+static int
+spfs_write_inode(struct inode *inode, struct writeback_control *wbc) {
+  /*
+   * Maybe this is called when timestamps are updated? to sync the changes to
+   * disk
+   *
+   * TODO lock $inode.private so we can use tree.shared(read) lock since we do
+   * not insert any new node and therefore do not perform any rebalance. And we
+   * are sure that there are not multiple modify on the same inode by locking
+   * it before doing anything.
+   */
+  int res;
+  struct spfs_super_block *sbi;
+
+  printk(KERN_INFO "spfs_write_inode()\n");
+
+  sbi = sb->s_fs_info;
+  BUG_ON(!sbi);
+
+  mutex_lock(&sbi->tree.lock);
+  res = spfs_btree_modify(&sbi->tree, inode->i_ino, inode, spfs_mod_inode_cb);
+  mutex_unlock(&sbi->tree.lock);
+
+  return res;
+}
+
+//=====================================
+static const struct file_system_type spfs_fs_type = {
     .name = "spfs",
     .fs_flags = FS_REQUIRES_DEV,
+    /* Mount an instance of the filesystem */
     .mount = spfs_mount,
-    .kill_sb = spfs_kill_superblock,
+    /* Shutdown an instance of the filesystem... */
+    .kill_sb = kill_block_super,
     .owner = THIS_MODULE,
+};
+
+//=====================================
+static const struct super_operations spfs_super_ops = {
+    /*
+     * ref: Documentation/filesystems/vfs.txt
+     *
+     * This method is called by alloc_inode() to allocate memory for struct
+     * inode and initialize it.
+     * If this function is not defined, a simple 'struct inode' is allocated.
+     * Normally alloc_inode will be used to allocate a larger structure which
+     * contains a 'struct inode' embedded within it.
+     */
+    .alloc_inode = spfs_alloc_inode,
+
+    /*
+     * This method is called by destroy_inode() to release resources allocated
+     * for struct inode. It is only required if ->alloc_inode was defined and
+     * simply undoes anything done by >alloc_inode.
+     */
+    .destroy_inode = spfs_free_inode,
+
+    /*
+     * This method is called when the VFS needs to write an inode to disc.
+     * The second parameter indicates whether the write should be synchronous
+     * or not, not all filesystems check this flag.
+     */
+    .write_inode = spfs_write_inode,
+
+    /*
+     * Called when the VFS wishes to free the superblock (i.e. unmount).
+     * This is called with the superblock lock held
+     */
+    .put_super = spfs_put_super,
 };
 
 //=====================================
 static int __init
 spfs_init(void) {
-  int ret;
+  int res;
 
   printk(KERN_INFO "init spfs\n");
+
+  spfs_inode_SLAB = spfs_create_inode_SLAB();
+  if (!spfs_inode_SLAB) {
+    printk(KERN_ERR "Failed creating inode SLAB cache\n");
+    return -ENOMEM;
+  }
 
   /*
    *	Adds the file system passed to the list of file systems the kernel
@@ -1139,28 +1294,30 @@ spfs_init(void) {
    *	structures and must not be freed until the file system has been
    *	unregistered.
    */
-  ret = register_filesystem(&spfs_fs_type);
-  if (likely(ret == 0)) {
-    printk(KERN_INFO "Sucessfully register_filesystem(simplefs)\n");
+  res = register_filesystem(&spfs_fs_type);
+  if (res) {
+    spfs_destroy_inode_SLAB(spfs_inode_SLAB);
+    printk(KERN_ERR "Failed register_filesystem(simplefs): %d\n", res);
   } else {
-    printk(KERN_ERR "Failed register_filesystem(simplefs): %d\n", ret);
+    printk(KERN_INFO "Sucessfully register_filesystem(simplefs)\n");
   }
 
-  return ret;
+  return res;
 }
 
 static void __exit
 spfs_exit(void) {
-  int ret;
+  int res;
 
   printk(KERN_INFO "exit spfs\n");
 
-  ret = unregister_filesystem(&spfs_fs_type);
-  if (likely(ret == 0)) {
-    printk(KERN_INFO "Sucessfully unregister_filesystem(simplefs)\n");
+  res = unregister_filesystem(&spfs_fs_type);
+  if (res) {
+    printk(KERN_INFO "Faied unregister_filesystem(simplefs): %d\n", res);
   } else {
-    printk(KERN_INFO "Faied unregister_filesystem(simplefs): %d\n", ret);
+    printk(KERN_INFO "Sucessfully unregister_filesystem(simplefs)\n");
   }
+  spfs_destroy_inode_SLAB(spfs_inode_SLAB);
 }
 
 module_init(spfs_init);
