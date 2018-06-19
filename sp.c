@@ -88,6 +88,23 @@ static const struct super_operations spfs_super_ops;
  */
 
 //=====================================
+static void
+spfs_setup_inode_fp(struct inode *inode) {
+  switch (inode->i_mode & S_IFMT) {
+  case S_IFREG:
+    inode->i_op = &spfs_inode_ops;
+    inode->i_fop = &spfs_file_ops;
+    break;
+  case S_IFDIR:
+    inode->i_op = &spfs_inode_ops;
+    inode->i_fop = &spfs_dir_ops;
+
+    inc_nlink(inode); // TODO??
+    break;
+  default:
+    BUG();
+  }
+}
 static struct spfs_inode *
 spfs_new_inode(struct super_block *sb, umode_t mode) {
   struct spfs_super_block *sbi;
@@ -108,29 +125,17 @@ spfs_new_inode(struct super_block *sb, umode_t mode) {
       mutex_unlock(&sbi->id_lock);
     }
 
+    inode->i_mode = mode;
+
     // doc
     inode_init_owner(inode, NULL, mode);
 
-    switch (mode & S_IFMT) {
-    case S_IFREG:
-      inode->i_op = &spfs_inode_ops;
-      inode->i_fop = &spfs_file_ops;
-      break;
-    case S_IFDIR:
-      inode->i_op = &spfs_inode_ops;
-      inode->i_fop = &spfs_dir_ops;
-
-      inc_nlink(inode); // TODO??
-      break;
-    default:
-      BUG();
-    }
-
-    inode->i_mode = mode;
     inode->i_atime = inode->i_mtime = inode->i_ctime = current_time(inode);
 
     result->size = 0;
     result->start = 0;
+
+    spfs_setup_inode_fp(inode);
 
     return result;
   }
@@ -178,8 +183,7 @@ spfs_inode_by_id(struct super_block *sb, spfs_ino needle) {
     return NULL;
   }
 
-  // TODO populate function ptrs...
-  /* TODO return spfs_fill_inode(sb, &entry, d); */
+  spfs_setup_inode_fp(result);
 
   // TODO Should we really unlock ref-cnt since we return $result to caller?
   unlock_new_inode(result);
@@ -215,8 +219,7 @@ spfs_generic_create(struct inode *parent, struct dentry *dentry, umode_t mode) {
     strcpy(inode->name, name);
 
     {
-      /* if (mutex_lock_interruptible(&sbi->tree.lock)) { */
-
+      /* XXX if (mutex_lock_interruptible(&sbi->tree.lock)) { */
       mutex_lock(&sbi->tree.lock);
       res = spfs_btree_insert(&sbi->tree, inode);
       mutex_unlock(&sbi->tree.lock);
@@ -232,7 +235,7 @@ spfs_generic_create(struct inode *parent, struct dentry *dentry, umode_t mode) {
   }
 
   res = 0;
-/* Lout: */
+  /* Lout: */
   return res;
 }
 
@@ -1134,10 +1137,7 @@ spfs_destroy_inode_SLAB(struct kmem_cache *slab) {
 //=====================================
 static bool
 spfs_mod_inode_cb(void *closure, struct spfs_inode *entry) {
-  struct inode *src = closure;
-
-  // TODO convert_from_inode(src, /*dest*/entry);
-
+  /* Just mark dirty since there should only be one instance of each inode */
   return true;
 }
 
