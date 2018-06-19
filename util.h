@@ -4,26 +4,25 @@
 #include <linux/buffer_head.h>
 
 extern unsigned int
-spfs_sb_remaining(struct buffer_head *bh, unsigned int pos);
+spfs_sb_remaining(struct buffer_head *bh, size_t pos);
 
 extern bool
-spfs_sb_read_u32(struct buffer_head *bh, unsigned int *pos, unsigned int *out);
+spfs_sb_read_u32(struct buffer_head *bh, size_t *pos, u32 *out);
 
 extern bool
-spfs_sb_write_u32(struct buffer_head *bh, unsigned int *pos, unsigned int val);
+spfs_sb_write_u32(struct buffer_head *bh, size_t *pos, u32 val);
 
 extern bool
-spfs_sb_read_sector_t(struct buffer_head *bh, unsigned int *pos, sector_t *out);
+spfs_sb_read_u64(struct buffer_head *bh, size_t *pos, u64 *out);
 
 extern bool
-spfs_sb_write_sector_t(struct buffer_head *bh, unsigned int *pos, sector_t val);
+spfs_sb_write_u64(struct buffer_head *bh, size_t *pos, u64 val);
 
 extern bool
-spfs_sb_read_str(struct buffer_head *bh, unsigned int *pos, char *str,
-                 size_t len);
+spfs_sb_read_str(struct buffer_head *bh, size_t *pos, char *str, size_t len);
 
 extern bool
-spfs_sb_write_str(struct buffer_head *bh, unsigned int *pos, const char *str,
+spfs_sb_write_str(struct buffer_head *bh, size_t *pos, const char *str,
                   size_t len);
 
 #endif

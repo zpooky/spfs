@@ -2,14 +2,14 @@
 
 /* ===================================== */
 unsigned int
-spfs_sb_remaining(struct buffer_head *bh, unsigned int pos) {
+spfs_sb_remaining(struct buffer_head *bh, size_t pos) {
   BUG_ON(pos > bh->b_size);
   return bh->b_size - pos;
 }
 
 /* ===================================== */
 bool
-spfs_sb_read_u32(struct buffer_head *bh, unsigned int *pos, unsigned int *out) {
+spfs_sb_read_u32(struct buffer_head *bh, size_t *pos, u32 *out) {
   if (spfs_sb_remaining(bh, *pos) < sizeof(*out)) {
     return false;
   }
@@ -24,7 +24,7 @@ spfs_sb_read_u32(struct buffer_head *bh, unsigned int *pos, unsigned int *out) {
 
 /* ===================================== */
 bool
-spfs_sb_write_u32(struct buffer_head *bh, unsigned int *pos, unsigned int val) {
+spfs_sb_write_u32(struct buffer_head *bh, size_t *pos, u32 val) {
   if (spfs_sb_remaining(bh, *pos) < sizeof(val)) {
     return false;
   }
@@ -39,31 +39,56 @@ spfs_sb_write_u32(struct buffer_head *bh, unsigned int *pos, unsigned int val) {
 
 /* ===================================== */
 extern bool
-spfs_sb_read_sector_t(struct buffer_head *bh, unsigned int *pos,
-                      sector_t *out) {
-  // TODO
+spfs_sb_read_u64(struct buffer_head *bh, size_t *pos, u64 *out) {
+  if (spfs_sb_remaining(bh, *pos) < sizeof(*out)) {
+    return false;
+  }
+
+  memcpy(out, bh->b_data + *pos, sizeof(*out));
+  *out = be64_to_cpu(*out);
+
+  *pos += sizeof(*out);
+
   return true;
 }
 
 extern bool
-spfs_sb_write_sector_t(struct buffer_head *bh, unsigned int *pos,
-                       sector_t val) {
-  // TODO
+spfs_sb_write_u64(struct buffer_head *bh, size_t *pos, u64 val) {
+  if (spfs_sb_remaining(bh, *pos) < sizeof(val)) {
+    return false;
+  }
+
+  val = cpu_to_be64(val);
+  memcpy(/*dest*/ bh->b_data + *pos, /*src*/ &val, sizeof(val));
+
+  *pos += sizeof(val);
+
   return true;
 }
 
 /* ===================================== */
 bool
-spfs_sb_read_str(struct buffer_head *bh, unsigned int *pos, char *str,
-                 size_t len) {
-  // TODO
+spfs_sb_read_str(struct buffer_head *bh, size_t *pos, char *out, size_t len) {
+  if (spfs_sb_remaining(bh, *pos) < len) {
+    return false;
+  }
+
+  memcpy(out, bh->b_data + *pos, len);
+  *pos += len;
+
   return true;
 }
 
 /* ===================================== */
 bool
-spfs_sb_write_str(struct buffer_head *bh, unsigned int *pos, const char *str,
+spfs_sb_write_str(struct buffer_head *bh, size_t *pos, const char *str,
                   size_t len) {
-  // TODO
+  if (spfs_sb_remaining(bh, *pos) < len) {
+    return false;
+  }
+
+  memcpy(/*dest*/ bh->b_data + *pos, /*src*/ &str, len);
+  *pos += len;
+
   return true;
 }

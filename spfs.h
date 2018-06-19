@@ -1,30 +1,20 @@
 #ifndef _SP_FS_SPFS_H
 #define _SP_FS_SPFS_H
 
-#define SPOOKY_FS_MAGIC 0xDEADBEEF
+#define SPOOKY_FS_SUPER_MAGIC 0xDEADBEEF
+#define SPOOKY_FS_FL_MAGIC 0xDEADBEEF
+#define SPOOKY_FS_BTREE_MAGIC 0xDEADBEEF
+
 #define SPOOKY_FS_INITIAL_BLOCK_SIZE 512
 
 #define SPOOKY_FS_NAME_MAX 256
 
 #define SPFS_ROOT_INODE_NO 1
 
-typedef unsigned int spfs_offset;
-typedef unsigned int spfs_id;
+typedef unsigned long spfs_offset;
+typedef unsigned long spfs_ino;
 
-typedef spfs_id spfs_be_id;
-
-struct spfs_super_block_wire {
-  unsigned int version;
-  unsigned int magic;
-  unsigned int block_size;
-  spfs_id id;
-  spfs_id root_id;
-
-  spfs_offset btree;
-
-  // TODO spfs_super_block should occopy 4096 on disk but not in memory
-  // char dummy[SPOOKY_FS_BLOCK_SIZE - (sizeof(unsigned int) * 2)];
-};
+typedef spfs_ino spfs_be_ino;
 
 // __be32	di_size;
 // __be32	di_gid;

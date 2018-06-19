@@ -19,7 +19,7 @@
 typedef sector_t spfs_be_sector_t;
 
 struct spfs_bentry {
-  spfs_be_id id;
+  spfs_be_ino id;
   spfs_be_sector_t offset;
 };
 
@@ -76,7 +76,7 @@ spfs_btree_init(struct super_block *sb, struct spfs_btree *tree,
 
 //=====================================
 static int
-spfs_be_id_cmp(spfs_be_id f, spfs_be_id s) {
+spfs_be_id_cmp(spfs_be_ino f, spfs_be_ino s) {
   spfs_id first;
   spfs_id second;
 
@@ -105,7 +105,7 @@ spfs_bentry_cmp(const struct spfs_bentry *f, spfs_id second) {
 }
 
 static int
-spfs_bubble_cmp(const struct btree_bubble *bubble, spfs_be_id o) {
+spfs_bubble_cmp(const struct btree_bubble *bubble, spfs_be_ino o) {
   return spfs_be_id_cmp(bubble->entry.id, o);
 }
 
@@ -362,7 +362,7 @@ bnode_bin_insert_b(struct spfs_btree *self, struct spfs_bnode *node,
 static int
 spfs_inode_parse(struct buffer_head *bh, struct spfs_inode *out) {
   // XXX magic
-  unsigned int pos = 0;
+  size_t pos = 0;
   if (!spfs_sb_read_u32(bh, &pos, &out->id)) {
     return -EIO;
   }
@@ -411,7 +411,7 @@ spfs_inode_parse(struct buffer_head *bh, struct spfs_inode *out) {
 static int
 spfs_inode_make(struct buffer_head *bh, const struct spfs_inode *in) {
   // XXX magic
-  unsigned int pos = 0;
+  size_t pos = 0;
 
   if (!spfs_sb_write_u32(bh, &pos, in->id)) {
     return -EIO;

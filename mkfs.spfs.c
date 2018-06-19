@@ -16,6 +16,76 @@
 
 #define SPOOKY_FS_BLOCK_SIZE 4096
 
+struct spfs_super_block_wire {
+  unsigned int magic;
+  unsigned int version;
+  unsigned int block_size;
+  unsigned int dummy;
+
+  spfs_ino id;
+  spfs_ino root_id;
+
+  spfs_offset btree;
+  spfs_offset free_list;
+
+  /* transient: { */
+  size_t blocks;
+  /* } */
+};
+
+struct spfs_free_list {
+  unsigned int magic;
+  unsigned int entries;
+
+  /* list of spfs_free_list */
+  spfs_offset next;
+};
+
+struct spfs_free_entry {
+  spfs_offset start;
+  unsigned int blocks;
+};
+
+static size_t
+mkfs_bytes_of(struct stat *s, size_t blocks) {
+  return s->st_blksize * blocks;
+}
+
+static int
+mkfs_block_size(int fd, struct spfs_super_block_wire *super) {
+  size_t header_blocks = 2; // Super + Free-List
+  struct stat s;
+
+  memset(&s, 0, sizeof(s));
+  int ret = fstat(fd, &s);
+  if (ret) {
+    return ret;
+  }
+  super->block_size = s.st_blksize;
+  size_t start = mkfs_bytes_of(&s, header_blocks);
+
+  if (s.st_size < start) {
+    fprintf(stderr, "is to small [%zu]\n", s.st_size);
+    return 1;
+  }
+
+  const size_t length = s.st_size - start;
+  super->blocks = length / super->block_size;
+
+  size_t hdd_block_size = s.st_blksize;
+  printf("hdd block size[%zu], fs block size[%u]\n", //
+         hdd_block_size, super->block_size);
+  printf("header[%u], data[%zu]\n", //
+         start, length);
+  printf("data blocks[%zu]\n", super->blocks);
+
+  if (super->blocks == 0) {
+    return 1;
+  }
+
+  return 0;
+}
+
 static int
 zero_fill(int fd, size_t bytes) {
   size_t i = 0;
@@ -33,6 +103,7 @@ zero_fill(int fd, size_t bytes) {
 
   return 0;
 }
+
 static int
 mkfs_write_u32(unsigned char *buffer, ssize_t *pos, unsigned int value) {
   value = htonl(value);
@@ -41,6 +112,26 @@ mkfs_write_u32(unsigned char *buffer, ssize_t *pos, unsigned int value) {
   *pos += sizeof(value);
 
   return 0;
+}
+
+static int
+mkfs_write_u64(unsigned char *buffer, ssize_t *pos, unsigned long value) {
+  value = htonlll(value);
+
+  memcpy(buffer + *pos, &value, sizeof(value));
+  *pos += sizeof(value);
+
+  return 0;
+}
+
+static int
+mkfs_write_ino(unsigned char *buffer, ssize_t *pos, spfs_ino value) {
+  return mkfs_write_u64(buffer, pos, value);
+}
+
+static int
+mkfs_write_offset(unsigned char *buffer, ssize_t *pos, spfs_offset value) {
+  return mkfs_write_u64(buffer, pos, value);
 }
 
 static int
@@ -59,13 +150,21 @@ super_block(int fd, const struct spfs_super_block_wire *super) {
   if (mkfs_write_u32(buffer, &pos, super->block_size)) {
     return 1;
   }
-  if (mkfs_write_u32(buffer, &pos, super->id)) {
-    return 1;
-  } // TODO define size of inode
-  if (mkfs_write_u32(buffer, &pos, super->root_id)) {
+  if (mkfs_write_u32(buffer, &pos, super->dummy)) {
     return 1;
   }
-  if (mkfs_write_u32(buffer, &pos, super->btree)) { // TODO define size
+
+  if (mkfs_write_ino(buffer, &pos, super->id)) {
+    return 1;
+  }
+  if (mkfs_write_ino(buffer, &pos, super->root_id)) {
+    return 1;
+  }
+
+  if (mkfs_write_offset(buffer, &pos, super->btree)) {
+    return 1;
+  }
+  if (mkfs_write_offset(buffer, &pos, super->free_list)) {
     return 1;
   }
 
@@ -79,57 +178,74 @@ super_block(int fd, const struct spfs_super_block_wire *super) {
 }
 
 static int
+mkfs_write_free_list_header(char *buffer, unsigned int *pos,
+                            const struct spfs_free_list *header) {
+  if (mkfs_write_u32(buffer, pos, /*length*/ header->magic)) {
+    return 1;
+  }
+  if (mkfs_write_u32(buffer, pos, /*length*/ header->entries)) {
+    return 1;
+  }
+  if (mkfs_write_offset(buffer, pos, /*next*/ header->next)) {
+    return 1;
+  }
+
+  return 0;
+}
+
+static int
+mkfs_write_free_entry(char *buffer, unsigned int *pos,
+                      const struct spfs_free_entry *entry) {
+  if (mkfs_write_offset(buffer, &b_pos, entry->start)) {
+    return 1;
+  }
+  if (mkfs_write_u32(buffer, &b_pos, entry->blocks)) {
+    return 1;
+  }
+
+  return 0;
+}
+
+static int
 free_list(int fd, const struct spfs_super_block_wire *super) {
-  const spfs_offset start_sector = 2; // TODO change & define better
-  const spfs_offset start = (SPOOKY_FS_BLOCK_SIZE * start_sector);
-  struct stat s;
   unsigned char buffer[1024];
   ssize_t b_pos = 0;
   ssize_t wres;
 
-  memset(&s, 0, sizeof(s));
-  int ret = fstat(fd, &s);
-  if (ret) {
-    return ret;
-  }
+  struct spfs_free_list header = {
+      /**/
+      .magic = SPOOKY_FS_FL_MAGIC,
+      .entires = 1,
+      .next = 0,
+      /**/
+  };
 
-  // TODO use s.st_blocksize instead of all SPOOKY_FS_BLOCK_SIZE
-  if (s.st_size < start) {
-    fprintf(stderr, "is to small [%zu]\n", s.st_size);
-    return 1;
-  }
+  struct spfs_free_entry entry = {
+      /* [super:0, free_list:1, free_start:2] */
+      .start = 2,
+      .blocks = super->blocks,
+      /**/
+  };
 
-  const size_t length = s.st_size - start;
-  const size_t blocks = length / super->block_size;
-
-  size_t hdd_block_size = s.st_blksize;
-  printf("hdd block size[%zu], fs block size[%u]\n", //
-         hdd_block_size, super->block_size);
-  printf("header[%u], data[%zu]\n", //
-         start, length);
-  printf("data blocks[%zu]\n", blocks);
-
-  if (blocks == 0) {
-    return 1;
-  }
-
-  /* entry[sector_t,blocks:size_t]
-   * free_list[length:u32,next:size_t,entry:[length]]
-   */
   memset(buffer, 0, sizeof(buffer));
-  if (mkfs_write_u32(buffer, &b_pos, /*length*/ 1)) {
+  if (mkfs_write_free_list_header(buffer, &b_pos, &header)) {
     return 1;
   }
-  if (mkfs_write_u32(buffer, &b_pos, /*next*/ 0)) {
+
+  if (mkfs_write_free_entry(buffer, &b_pos, &blocks)) {
     return 1;
   }
-  {
-    if (mkfs_write_u32(buffer, &b_pos, start_sector)) {
-      return 1;
-    }
-    if (mkfs_write_u32(buffer, &b_pos, blocks)) {
-      return 1;
-    }
+
+  off_t cur = lseek(fd, 0, SEEK_CUR);
+  if (cur == -1) {
+    return 1;
+  }
+
+  if (cur != super->block_size) {
+    fprintf(stderr,
+            "wrong offset when writing free-list at: [%jd] expected: [%u]\n",
+            cur, super->block_size);
+    return 1;
   }
 
   wres = write(fd, buffer, b_pos);
@@ -155,12 +271,23 @@ main(int argc, const char **args) {
 
     struct spfs_super_block_wire super = {
         .version = 1,
-        .magic = SPOOKY_FS_MAGIC,
-        .block_size = SPOOKY_FS_BLOCK_SIZE,
+        .magic = SPOOKY_FS_SUPER_MAGIC,
+        .block_size = 0,
+        .dummy = 0,
         .id = SPFS_ROOT_INODE_NO,
         .root_id = SPFS_ROOT_INODE_NO,
         .btree = 0,
+        .free_list = 1,
+
+        /* transient: { */
+        .blocks = 0,
+        /* } */
     };
+
+    if (mkfs_block_size(fd, &super)) {
+      fprintf(stderr, "failed setting up block_size: '%s'\n", device);
+      goto Ldone;
+    }
 
     if (super_block(fd, &super)) {
       fprintf(stderr, "failed to write superblock: '%s'\n", device);

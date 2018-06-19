@@ -4,19 +4,23 @@
 #include <linux/slab.h> /* kzalloc */
 
 /* ===================================== */
+static int
+spfs_read_entry(struct buffer_head *bh, unsigned int *bh_pos,
+                struct spfs_free_node *result) {
+
+  if (!spfs_sb_read_u64(bh, bh_pos, &result->start)) {
+    return 1;
+  }
+  if (!spfs_sb_read_u32(bh, bh_pos, &result->blocks)) {
+    return 1;
+  }
+
+  return 0;
+}
+
 static struct spfs_free_node *
 spfs_init_free_list_entry(struct buffer_head *bh, unsigned int *bh_pos) {
   struct spfs_free_node *result;
-
-  spfs_offset entry_start;
-  unsigned int entry_blocks;
-
-  if (!spfs_sb_read_u32(bh, bh_pos, &entry_start)) {
-    return NULL;
-  }
-  if (!spfs_sb_read_u32(bh, bh_pos, &entry_blocks)) {
-    return NULL;
-  }
 
   result = kzalloc(sizeof(*result), GFP_KERNEL);
   if (!result) {
@@ -24,15 +28,43 @@ spfs_init_free_list_entry(struct buffer_head *bh, unsigned int *bh_pos) {
   }
 
   result->next = NULL;
-  result->start = entry_start;
-  result->blocks = entry_blocks;
+
+  if (spfs_read_entry(bh, bh_pos, result)) {
+    kfree(result);
+    return NULL;
+  }
 
   return result;
+}
+
+static int
+spfs_read_header(struct buffer_head *bh, unsigned int *bh_pos,
+                 unsigned int *length, spfs_offset next) {
+  unsigned int magic;
+  if (!spfs_sb_read_u32(bh, &bh_pos, magic)) {
+    return -EINVAL;
+  }
+
+  if (magic != SPOOKY_FS_FL_MAGIC) {
+    printk(KERN_INFO "invalid Free-List magic:[%u] expected:[%u]", //
+           magic, SPOOKY_FS_FL_MAGIC);
+    return -EINVAL;
+  }
+
+  if (!spfs_sb_read_u32(bh, &bh_pos, length)) {
+    return -EINVAL;
+  }
+  if (!spfs_sb_read_u64(bh, &bh_pos, next)) {
+    return -EINVAL;
+  }
+
+  return 0;
 }
 
 int
 spfs_free_init(struct super_block *sb, struct spfs_free_list *list,
                sector_t head) {
+  int res;
   mutex_init(&list->lock);
   list->root = NULL;
   list->blocks = 0;
@@ -43,24 +75,16 @@ Lit:
     struct buffer_head *bh;
     unsigned int bh_pos = 0;
 
-    unsigned int free_length;
-    spfs_offset free_next;
-
     bh = sb_bread(sb, head);
     if (!bh) {
       printk(KERN_INFO "NULL = sb_bread(sb, head[%zu])\n", head);
       return 1;
     }
 
-    /* entry[spfs_offset,size_t]
-     * free_list[length:u32,next:spfs_offset,entry:[length]]
-     */
-
-    if (!spfs_sb_read_u32(bh, &bh_pos, &free_length)) {
-      return -EINVAL;
-    }
-    if (!spfs_sb_read_u32(bh, &bh_pos, &free_next)) {
-      return -EINVAL;
+    res = spfs_read_header(bh, bh_pos, list);
+    if (res) {
+      // cleanup
+      return res;
     }
 
     for (i = 0; i < free_length; ++i) {
@@ -68,7 +92,7 @@ Lit:
       node = spfs_init_free_list_entry(bh, &bh_pos);
 
       if (!node) {
-        // TODO cleanup
+        // cleanup
         return 1;
       }
 
@@ -79,6 +103,7 @@ Lit:
     }
 
     brelse(bh);
+
     head = free_next;
     goto Lit;
   }

@@ -41,6 +41,20 @@
  * #
  * if (IS_ERR(ptr))
  *   return PTR_ERR(ptr);
+ *
+ * #
+ * unsigned long i_ino;
+ */
+
+/*
+ * # Super block
+ * - Located at sector_t: 0
+ * - Occupies the complete first sector
+ * - Always contains max 512Kb useable data, independent of block size
+ *
+ * # Free List
+ * free_entry[start: sector_t, blocks: u32]
+ * free_list[length: u32, next_free_list: offset, free_entry:[length]]
  */
 static const struct inode_operations spfs_inode_ops;
 static const struct file_operations spfs_file_ops;
@@ -151,7 +165,7 @@ spfs_convert_to_inode(struct super_block *sb, const struct spfs_inode *src,
 }
 
 static struct inode *
-spfs_inode_by_id(struct super_block *sb, struct dentry *d, spfs_id ino) {
+spfs_inode_by_id(struct super_block *sb, struct dentry *d, spfs_ino ino) {
   struct spfs_super_block *sbi;
   int res;
   struct spfs_inode entry;
@@ -329,7 +343,7 @@ spfs_for_all_children(struct inode *parent, void *closure, for_all_cb f) {
     }
 
     if (res) {
-      // TODO cleanup
+      // cleanup
       return false;
     }
 
@@ -343,11 +357,11 @@ Lit:
     /*
      * [next:u32,children:u32,ino:u32...]:4096
      */
-    spfs_id current_inode;
+    spfs_ino current_inode;
     spfs_offset next;
     unsigned int children;
     unsigned int i;
-    unsigned int bh_pos = 0;
+    size_t bh_pos = 0;
 
     struct buffer_head *bh;
     bh = sb_bread(sb, child_list);
@@ -559,7 +573,7 @@ spfs_read(struct file *file, char __user *buf, size_t len, loff_t *ppos) {
       unsigned int capacity;
       unsigned int length;
       struct buffer_head *bh;
-      unsigned int bh_pos = 0;
+      size_t bh_pos = 0;
 
       /* [next:u32,cap:u32,length:u32,raw:cap] */
       bh = sb_bread(sb, start);
@@ -648,7 +662,7 @@ spfs_file_block_alloc(struct super_block *sb, size_t len) {
   result = spfs_free_alloc(&sbi->free_list, blocks);
 
   if (result) {
-    unsigned int b_pos = 0;
+    size_t b_pos = 0;
     struct buffer_head *bh;
 
     bh = sb_bread(sb, result);
@@ -739,7 +753,7 @@ spfs_write(struct file *file, const char __user *buf, size_t len,
       bool block_dirty = false;
 
       struct buffer_head *bh;
-      unsigned int bh_pos = 0;
+      size_t bh_pos = 0;
       unsigned int con;
 
       bh = sb_bread(sb, start);
@@ -853,6 +867,7 @@ static const struct file_operations spfs_file_ops = {
     .write = spfs_write
     /**/
 };
+
 //=====================================
 static bool
 spfs_iterate_cb(void *closure, struct spfs_inode *cur) {
@@ -892,7 +907,8 @@ static const struct file_operations spfs_dir_ops = {
 static int
 spfs_read_super_block(struct buffer_head *bh, struct spfs_super_block *super) {
   int res;
-  unsigned int pos;
+  size_t pos;
+  unsigned int dummy;
 
   res = -EINVAL;
   pos = 0;
@@ -905,13 +921,21 @@ spfs_read_super_block(struct buffer_head *bh, struct spfs_super_block *super) {
   if (spfs_sb_read_u32(bh, &pos, &super->block_size)) {
     goto Lout;
   }
-  if (spfs_sb_read_u32(bh, &pos, &super->id)) {
+  if (spfs_sb_read_u32(bh, &pos, &super->dummy)) {
     goto Lout;
   }
-  if (spfs_sb_read_u32(bh, &pos, &super->root_id)) {
+
+  if (spfs_sb_read_u64(bh, &pos, &super->id)) {
     goto Lout;
   }
+  if (spfs_sb_read_u64(bh, &pos, &super->root_id)) {
+    goto Lout;
+  }
+
   if (spfs_sb_read_sector_t(bh, &pos, &super->btree_offset)) {
+    goto Lout;
+  }
+  if (spfs_sb_read_sector_t(bh, &pos, &super->free_list_offset)) {
     goto Lout;
   }
 
@@ -942,9 +966,9 @@ spfs_super_block_init(struct super_block *sb, struct spfs_super_block *super,
     goto Lrelease;
   }
 
-  if (super->magic != SPOOKY_FS_MAGIC) {
-    printk(KERN_INFO "super->magic[%u] != SPOOKY_FS_MAGIC[%u]\n", //
-           super->magic, SPOOKY_FS_MAGIC);
+  if (super->magic != SPOOKY_FS_SUPER_MAGIC) {
+    printk(KERN_INFO "super->magic[%u] != SPOOKY_FS_SUPER_MAGIC[%u]\n", //
+           super->magic, SPOOKY_FS_SUPER_MAGIC);
     res = -EINVAL;
     goto Lrelease;
   }
@@ -967,8 +991,6 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
   int res;
 
   const spfs_offset super_start = 0;
-  const spfs_offset free_start = super_start + 1;
-
   printk(KERN_INFO "spfs_kill_super_block()\n");
 
   sbi = kzalloc(sizeof(*sbi), GFP_KERNEL);
@@ -987,9 +1009,6 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
     goto Lerr;
   }
 
-  // TODO 1. hardcode blocksize to 512kb to be used by super_block
-  // TODO 2. btree root should be dynamic not init in mkfs
-  // TODO 3. free_list head should use the configured sbi->block_size
   res = spfs_super_block_init(sb, sbi, super_start);
   if (res) {
     goto Lerr;
@@ -1005,7 +1024,7 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
     goto Lerr;
   }
 
-  res = spfs_free_init(sb, &sbi->free_list, free_start);
+  res = spfs_free_init(sb, &sbi->free_list, sbi->free_list_offset);
   if (res) {
     goto Lerr;
   }

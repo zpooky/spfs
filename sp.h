@@ -15,6 +15,7 @@ struct spfs_super_block {
   unsigned int block_size;
 
   sector_t btree_offset;
+  sector_t free_list_offset;
 
   spfs_id id;
   struct mutex id_lock; // TODO spin lock
