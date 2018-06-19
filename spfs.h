@@ -22,23 +22,5 @@ typedef spfs_ino spfs_be_ino;
 // __be32	di_mode;
 // __be64	di_ctime;
 
-struct spfs_inode {
-  spfs_id id;
-  unsigned int size;
-  mode_t mode;
-
-  unsigned int gid;
-  unsigned int uid;
-
-  unsigned int atime;
-  unsigned int mtime;
-  unsigned int ctime;
-
-  // spfs_offset children_start;
-  // spfs_offset file_start;
-  spfs_offset start;
-
-  char name[SPOOKY_FS_NAME_MAX];
-};
 
 #endif
