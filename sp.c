@@ -140,7 +140,7 @@ spfs_new_inode(struct super_block *sb, umode_t mode) {
     return result;
   }
 
-  return NULL;
+  return ERR_PTR(-ENOMEM);
 }
 
 // TODO check return pointer code(if (IS_ERR(inode)) {), never mix NULL &
@@ -180,7 +180,7 @@ spfs_inode_by_id(struct super_block *sb, spfs_ino needle) {
   if (res) {
     /* Not found */
     // cleanup inode(unlock_new_inode+gc)
-    return NULL;
+    return ERR_PTR(-ENOMEM);
   }
 
   spfs_setup_inode_fp(result);
@@ -240,28 +240,47 @@ spfs_generic_create(struct inode *parent, struct dentry *dentry, umode_t mode) {
 }
 
 //=====================================
-/* # Create file
- */
+static int
+spfs_add_child(struct inode *parent, spfs_ino id) {
+  // doc
+  inc_nlink(parent);
+
+  // TODO
+  return 0;
+}
+
+/* # Create file */
 static int
 spfs_create(struct inode *parent, struct dentry *subject, umode_t mode,
             bool excl) {
+  int res;
   BUG_ON(!S_ISREG(mode));
-  return spfs_generic_create(parent, subject, mode); // TODO excl?
+
+  // newly created inode-lock {
+  res = spfs_generic_create(parent, subject, mode); // TODO excl?
+  if (!res) {
+    spfs_ino id = subject->d_inode->i_ino;
+    res = spfs_add_child(parent, id);
+  }
+  //}
+
+  return res;
 }
 
 //=====================================
-/* # Create directory
- */
+/* # Create directory */
 static int
 spfs_mkdir(struct inode *parent, struct dentry *subject, umode_t mode) {
   int res;
   BUG_ON(!S_ISDIR(mode));
 
+  // newly created inode-lock {
   res = spfs_generic_create(parent, subject, mode);
   if (!res) {
-    // doc
-    inc_nlink(parent);
+    spfs_ino id = subject->d_inode->i_ino;
+    res = spfs_add_child(parent, id);
   }
+  //}
 
   return res;
 }
@@ -347,9 +366,9 @@ Lit:
         struct spfs_inode *cur_child;
         cur_child = spfs_inode_by_id(sb, cur_ino);
 
-        if (cur_child) {
+        if (!IS_ERR(cur_child)) {
           if (!f(closure, cur_child)) {
-            // cleanup
+            brelse(bh);
             goto Lunlock;
           }
         }
@@ -1020,9 +1039,9 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
   }
 
   root = spfs_inode_by_id(sb, sbi->root_id);
-  if (!root) {
+  if (IS_ERR(root)) {
     root = spfs_new_inode(sb, S_IFDIR);
-    if (!root) {
+    if (IS_ERR(root)) {
       res = -ENOMEM;
       goto Lerr;
     }
