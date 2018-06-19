@@ -88,37 +88,6 @@ static const struct super_operations spfs_super_ops;
  */
 
 //=====================================
-
-//=====================================
-static int
-spfs_convert_from_inode(struct spfs_inode *dest, struct inode *src,
-                        const char *name, umode_t mode) {
-  struct inode *dest_inode = &dest->i_inode;
-  size_t n_length = strlen(name);
-
-  BUG_ON(!dest);
-  BUG_ON(!src);
-
-  // TODO all fields
-
-  if (n_length > sizeof(dest->name)) {
-    return 1;
-  }
-  strcpy(dest->name, name);
-
-  dest_inode->i_mode = mode;
-  dest_inode->i_ino = src->i_ino;
-
-  dest->start = 0;
-  if (S_ISDIR(mode)) {
-  } else if (S_ISREG(mode)) {
-  } else {
-    BUG();
-  }
-
-  return 0;
-}
-
 static struct spfs_inode *
 spfs_new_inode(struct super_block *sb, umode_t mode) {
   struct spfs_super_block *sbi;
@@ -129,6 +98,10 @@ spfs_new_inode(struct super_block *sb, umode_t mode) {
 
   inode = new_inode(sb);
   if (inode) {
+    struct spfs_inode *result;
+
+    result = SPFS_INODE(inode);
+    /* struct spfs_inode* */
     {
       mutex_lock(&sbi->id_lock);
       inode->i_ino = sbi->id++;
@@ -153,10 +126,16 @@ spfs_new_inode(struct super_block *sb, umode_t mode) {
       BUG();
     }
 
+    inode->i_mode = mode;
     inode->i_atime = inode->i_mtime = inode->i_ctime = current_time(inode);
+
+    result->size = 0;
+    result->start = 0;
+
+    return result;
   }
 
-  return SPFS_INODE(inode);
+  return NULL;
 }
 
 // TODO check return pointer code(if (IS_ERR(inode)) {), never mix NULL &
@@ -213,9 +192,7 @@ spfs_generic_create(struct inode *parent, struct dentry *dentry, umode_t mode) {
   int res;
   struct super_block *sb;
   struct spfs_super_block *sbi;
-  const char *name;
-  struct spfs_inode subject_entry;
-  struct spfs_inode *subject;
+  struct spfs_inode *inode;
 
   BUG_ON(!parent);
   BUG_ON(!dentry);
@@ -226,33 +203,36 @@ spfs_generic_create(struct inode *parent, struct dentry *dentry, umode_t mode) {
   sbi = sb->s_fs_info;
   BUG_ON(!sbi);
 
-  subject = spfs_new_inode(sb, mode);
-  if (!subject) {
-    return -ENOSPC;
-  }
+  inode = spfs_new_inode(sb, mode);
+  if (inode) {
+    const char *name = dentry->d_name.name;
+    size_t n_length = strlen(name);
 
-  name = dentry->d_name.name; // TODO
-
-  res = spfs_convert_from_inode(/*dest*/ &subject_entry, &subject->i_inode,
-                                name, mode);
-  if (!res) {
-    if (mutex_lock_interruptible(&sbi->tree.lock)) {
+    if (n_length > sizeof(inode->name)) {
       // cleanup
-      return -EINTR;
+      return 1;
+    }
+    strcpy(inode->name, name);
+
+    {
+      /* if (mutex_lock_interruptible(&sbi->tree.lock)) { */
+
+      mutex_lock(&sbi->tree.lock);
+      res = spfs_btree_insert(&sbi->tree, inode);
+      mutex_unlock(&sbi->tree.lock);
     }
 
-    res = spfs_btree_insert(&sbi->tree, &subject_entry);
-    mutex_unlock(&sbi->tree.lock);
+    if (res) {
+      // cleanup
+    }
+
+    // doc
+    d_add(dentry, &inode->i_inode);
+    BUG_ON(dentry->d_inode != &inode->i_inode);
   }
 
-  if (res) {
-    // cleanup
-  }
-
-  // doc
-  d_add(dentry, &subject->i_inode);
-  BUG_ON(dentry->d_inode != &subject->i_inode);
-
+  res = 0;
+/* Lout: */
   return res;
 }
 
