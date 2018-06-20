@@ -30,9 +30,6 @@
  * #
  * The type used for indexing onto a disc or disc partition.
  *
- * Linux always considers sectors to be 512 bytes long independently
- * of the devices real block size.
- *
  * blkcnt_t is the type of the inode's block count.
  * - typedef u64 sector_t;
  * - typedef u64 blkcnt_t;
@@ -58,7 +55,7 @@
 /* # Super block
  * - Located at sector_t: 0
  * - Occupies the complete first sector
- * - Always contains max 512Kb useable data, independent of block size
+ * - Always contains max 512KB useable data, independent of block size
  *
  * # Btree
  *
@@ -80,8 +77,13 @@ static const struct file_operations spfs_dir_ops;
 static const struct super_operations spfs_super_ops;
 
 /*
+ *
  * TODO add child to parent directory inode start list
  * TODO KM unload write back
+ * TODO inode ref count
+ * TODO inode correct locking
+ * TODO new_inode lock until properly created
+ * TODO internal lock inode when accessing inode.i_* variables?
  *
  * XXX optimize sb_bread without reading for block device when we are not
  * interested in the content of the read, we only want to overwrite all content
@@ -99,40 +101,40 @@ spfs_setup_inode_fp(struct inode *inode) {
     inode->i_op = &spfs_inode_ops;
     inode->i_fop = &spfs_dir_ops;
 
-    inc_nlink(inode); // TODO??
+    inc_nlink(inode); // TODO
     break;
   default:
     BUG();
   }
 }
 static struct spfs_inode *
-spfs_new_inode(struct super_block *sb, umode_t mode) {
+spfs_new_inode(struct super_block *sb, struct dentry *dentry, umode_t mode) {
   struct spfs_super_block *sbi;
   struct inode *inode;
 
   sbi = sb->s_fs_info;
   BUG_ON(!sbi);
 
+  // XXX maybe use iget_locked() here as well and except the I_NEW flag always,
+  // to be sure we properly init inode before release of lock.
   inode = new_inode(sb);
   if (inode) {
     struct spfs_inode *result;
-
     result = SPFS_INODE(inode);
-    /* struct spfs_inode* */
+
     {
       mutex_lock(&sbi->id_lock);
       inode->i_ino = sbi->id++;
       mutex_unlock(&sbi->id_lock);
     }
 
-    inode->i_mode = mode;
-
-    // doc
-    inode_init_owner(inode, NULL, mode);
+    /* #inode_init_owner()
+     * Init uid,gid,mode for new inode according to posix standards
+     */
+    inode_init_owner(inode, dentry, mode);
 
     inode->i_atime = inode->i_mtime = inode->i_ctime = current_time(inode);
 
-    result->size = 0;
     result->start = 0;
 
     spfs_setup_inode_fp(inode);
@@ -143,17 +145,15 @@ spfs_new_inode(struct super_block *sb, umode_t mode) {
   return ERR_PTR(-ENOMEM);
 }
 
-// TODO check return pointer code(if (IS_ERR(inode)) {), never mix NULL &
-// PTR_ERR
 static struct spfs_inode *
 spfs_inode_by_id(struct super_block *sb, spfs_ino needle) {
   int res;
   struct spfs_super_block *sbi;
   struct inode *result;
 
-  /* #iget_locked
+  /* #iget_locked()
    * - Search for existing inode in cache, and if found return it with
-   * increased ref count.
+   *   increased ref count.
    * - if not in cache allocate new inode and set state to I_NEW, caller is
    *   responsible to populate it.
    */
@@ -179,13 +179,23 @@ spfs_inode_by_id(struct super_block *sb, spfs_ino needle) {
 
   if (res) {
     /* Not found */
-    // cleanup inode(unlock_new_inode+gc)
-    return ERR_PTR(-ENOMEM);
+    // cleanup
+
+    /* #iget_failed()
+     * Mark an under-construction inode as dead and release it
+     */
+    iget_failed(result);
+
+    return ERR_PTR(-ENOENT);
   }
 
   spfs_setup_inode_fp(result);
 
-  // TODO Should we really unlock ref-cnt since we return $result to caller?
+  /* #unlock_new_inode()
+   * Clear the I_NEW state and wake up any waiters.
+   * Called when the inode is fully initialised to clear the new state of the
+   * inode and wake up anyone waiting for the inode to finish initialisation.
+   */
   unlock_new_inode(result);
 
   return SPFS_INODE(result);
@@ -207,16 +217,16 @@ spfs_generic_create(struct inode *parent, struct dentry *dentry, umode_t mode) {
   sbi = sb->s_fs_info;
   BUG_ON(!sbi);
 
-  inode = spfs_new_inode(sb, mode);
+  res = -ENOENT;
+  inode = spfs_new_inode(sb, dentry, mode);
   if (inode) {
-    const char *name = dentry->d_name.name;
-    size_t n_length = strlen(name);
-
-    if (n_length > sizeof(inode->name)) {
+    struct qstr *name = &dentry->d_name;
+    if (name->len > sizeof(inode->name)) {
       // cleanup
-      return 1;
+      return -ENAMETOOLONG;
     }
-    strcpy(inode->name, name);
+    memset(inode->name, 0, sizeof(inode->name));
+    memcpy(inode->name, name->name, name->len);
 
     {
       /* XXX if (mutex_lock_interruptible(&sbi->tree.lock)) { */
@@ -227,22 +237,31 @@ spfs_generic_create(struct inode *parent, struct dentry *dentry, umode_t mode) {
 
     if (res) {
       // cleanup
+      goto Lout;
     }
 
-    // doc
-    d_add(dentry, &inode->i_inode);
+    /* #d_instantiate()
+     * Fill in inode information for a dentry
+     * XXX
+     * This assumes that the inode count has been incremented (or otherwise set)
+     * by the caller to indicate that it is now in use by the dcache.
+     */
+    d_instantiate(dentry, &inode->i_inode);
     BUG_ON(dentry->d_inode != &inode->i_inode);
+
+    res = 0;
   }
 
-  res = 0;
-  /* Lout: */
+Lout:
   return res;
 }
 
 //=====================================
 static int
 spfs_add_child(struct inode *parent, spfs_ino id) {
-  // doc
+  /* #inc_nlink()
+   * increment an inode's link count
+   */
   inc_nlink(parent);
 
   // TODO
@@ -257,7 +276,7 @@ spfs_create(struct inode *parent, struct dentry *subject, umode_t mode,
   BUG_ON(!S_ISREG(mode));
 
   // newly created inode-lock {
-  res = spfs_generic_create(parent, subject, mode); // TODO excl?
+  res = spfs_generic_create(parent, subject, mode); // XXX excl?
   if (!res) {
     spfs_ino id = subject->d_inode->i_ino;
     res = spfs_add_child(parent, id);
@@ -296,15 +315,21 @@ struct spfs_directory_block {
 static int
 spfs_parse_directory_block(struct buffer_head *bh, size_t *pos,
                            struct spfs_directory_block *out) {
+  unsigned long magic;
   /*
    *        child:[ino: u64]
    * folder_block:[next:sector_t, children:u32, cx: child[children]]
    */
-  // XXX magic
-  if (!spfs_sb_read_u32(bh, pos, &out->next)) {
+  if (!spfs_sb_read_u32(bh, pos, &magic)) {
+    return -EINVAL;
+  }
+  if (magic != SPOOKY_FS_DIR_BLOCK_MAGIC) {
     return -EINVAL;
   }
 
+  if (!spfs_sb_read_u32(bh, pos, &out->next)) {
+    return -EINVAL;
+  }
   if (!spfs_sb_read_u32(bh, pos, &out->children)) {
     return EINVAL;
   }
@@ -336,7 +361,7 @@ Lit:
   if (child_list) {
     struct buffer_head *bh;
     struct spfs_directory_block block;
-    u32 i;
+    unsigned long i;
     size_t bh_pos;
 
     bh = sb_bread(sb, child_list);
@@ -436,8 +461,7 @@ spfs_inode_by_name(struct super_block *sb, struct spfs_inode *parent,
     };
 
     if (mutex_lock_interruptible(&parent->lock)) {
-      // TODO return error(pointer error?)
-      return NULL;
+      return ERR_PTR(-EINTR);
     }
 
     spfs_for_all_children(parent, &data, &spfs_inode_by_name_cb);
@@ -454,7 +478,6 @@ spfs_inode_by_name(struct super_block *sb, struct spfs_inode *parent,
  */
 static struct dentry *
 spfs_lookup(struct inode *parent, struct dentry *dentry, unsigned int flags) {
-  /* struct inode *subject; */
   struct super_block *sb;
   struct inode *result;
 
@@ -466,18 +489,51 @@ spfs_lookup(struct inode *parent, struct dentry *dentry, unsigned int flags) {
 
   result = spfs_inode_by_name(sb, SPFS_INODE(parent), dentry);
   if (result) {
-    /* inode_init_owner(inode, parent, ); */
-    d_add(dentry, result);
+    if (!IS_ERR(result)) {
+      /* #d_add()
+       * XXX
+       * This adds the entry to the hash queues and initializes inode.
+       */
+      d_add(dentry, result);
+    }
+    // XXX propagate ERR
+    return result;
   }
 
   return NULL;
 }
 
 static const struct inode_operations spfs_inode_ops = {
-    /**/
+    /* create: called by the open(2) and creat(2) system calls. Only
+     * required if you want to support regular files. The dentry you
+     * get should not have an inode (i.e. it should be a negative
+     * dentry). Here you will probably call d_instantiate() with the
+     * dentry and the newly created inode
+     */
     .create = spfs_create,
-    /* Perform a lookup of an inode given parent directory and filename. */
+
+    /* Perform a lookup of an inode given parent directory and filename.
+     *
+     * called when the VFS needs to look up an inode in a parent
+     * directory. The name to look for is found in the dentry. This
+     * method must call d_add() to insert the found inode into the
+     * dentry. The "i_count" field in the inode structure should be
+     * incremented. If the named inode does not exist a NULL inode
+     * should be inserted into the dentry (this is called a negative
+     * dentry). Returning an error code from this routine must only
+     * be done on a real error, otherwise creating inodes with system
+     * calls like create(2), mknod(2), mkdir(2) and so on will fail.
+     * If you wish to overload the dentry methods then you should
+     * initialise the "d_dop" field in the dentry; this is a pointer
+     * to a struct "dentry_operations".
+     * This method is called with the directory inode semaphore held
+     */
     .lookup = spfs_lookup,
+
+    /* mkdir: called by the mkdir(2) system call. Only required if you want
+     * to support creating subdirectories. You will probably need to
+     * call d_instantiate() just as you would in the create() method
+     */
     .mkdir = spfs_mkdir
     /**/
 };
@@ -496,16 +552,24 @@ struct spfs_file_block {
 
 static int
 spfs_parse_file_block(struct buffer_head *bh, size_t *pos,
-                      struct spfs_file_block *result) {
-  // XXX magic
-  /* [next:sector_t, cap:u32, length:u32, raw:cap] */
-  if (!spfs_sb_read_u32(bh, pos, &result->next)) {
+                      struct spfs_file_block *out) {
+  unsigned long magic;
+
+  /* [magic:u32, next:sector_t, cap:u32, length:u32, raw:cap] */
+  if (!spfs_sb_read_u32(bh, pos, &magic)) {
     return -EINVAL;
   }
-  if (!spfs_sb_read_u32(bh, pos, &result->capacity)) {
+  if (magic != SPOOKY_FS_FILE_BLOCK_MAGIC) {
     return -EINVAL;
   }
-  if (!spfs_sb_read_u32(bh, pos, &result->length)) {
+
+  if (!spfs_sb_read_u32(bh, pos, &out->next)) {
+    return -EINVAL;
+  }
+  if (!spfs_sb_read_u32(bh, pos, &out->capacity)) {
+    return -EINVAL;
+  }
+  if (!spfs_sb_read_u32(bh, pos, &out->length)) {
     return -EINVAL;
   }
 
@@ -515,6 +579,10 @@ spfs_parse_file_block(struct buffer_head *bh, size_t *pos,
 static int
 spfs_make_file_block(struct buffer_head *bh, size_t *pos,
                      const struct spfs_file_block *in) {
+  if (!spfs_sb_write_u32(bh, pos, SPOOKY_FS_FILE_BLOCK_MAGIC)) {
+    return 1;
+  }
+
   if (!spfs_sb_write_u32(bh, pos, in->next)) {
     return 1;
   }
@@ -534,7 +602,7 @@ spfs_make_file_block(struct buffer_head *bh, size_t *pos,
  * read.
  */
 static ssize_t
-spfs_read(struct file *file, char __user *buf, size_t len, loff_t *ppos) {
+spfs_read(struct file *file, char __user *in_buf, size_t in_len, loff_t *ppos) {
 
   int res;
   struct spfs_inode *inode;
@@ -544,24 +612,22 @@ spfs_read(struct file *file, char __user *buf, size_t len, loff_t *ppos) {
   loff_t pos;
   ssize_t read;
 
-  BUG_ON(!ppos);
+  if (!ppos) {
+    return -EINVAL;
+  }
 
   pos = *ppos;
   read = 0;
 
   printk(KERN_INFO "spfs_read()\n");
 
-  if (!ppos) {
-    return -EINVAL;
-  }
-
-  if (len == 0) {
+  if (in_len == 0) {
     return 0;
   }
 
   BUG_ON(!file);
 
-  inode = SPFS_INODE(file->f_inode);
+  inode = SPFS_INODE(file_inode(file));
 
   if (!S_ISREG(inode->i_inode.i_mode)) {
     return -EINVAL;
@@ -596,36 +662,33 @@ spfs_read(struct file *file, char __user *buf, size_t len, loff_t *ppos) {
         return res;
       }
 
-      /*
-       * if (length != capacity) {
-       *   BUG_ON(next);
-       * }
-       */
-
       con = MIN(pos, spfs_sb_remaining(bh, bh_pos));
       bh_pos += con;
-      pos += con;
+      pos -= con;
 
-      if (bh_pos < bh->b_size) {
-        con = MIN(len, spfs_sb_remaining(bh, bh_pos));
-        copy_to_user(/*dest*/ buf, /*src*/ bh->b_data + bh_pos, con);
-        bh_pos += con;
-        buf += con;
-        len -= con;
+      if (pos == 0) {
 
-        read += con;
+        con = MIN(in_len, spfs_sb_remaining(bh, bh_pos));
+        if (con > 0) {
+          copy_to_user(/*dest*/ in_buf, /*src*/ bh->b_data + bh_pos, con);
+          bh_pos += con;
+          in_buf += con;
+          in_len -= con;
+
+          read += con;
+        }
       }
 
       brelse(bh);
 
-      if (len > 0) {
+      if (in_len > 0) {
         start = file_block.next;
         goto Lit;
       }
     }
     mutex_unlock(&inode->lock);
 
-    *ppos += read; // TODO ?
+    *ppos += read;
   }
 
   return read;
@@ -703,38 +766,38 @@ spfs_file_block_alloc(struct super_block *sb, size_t len) {
 /*
  * Sends data to the device. If missing, -EINVAL is returned to the program
  * calling the write system call. The return value, if non-negative,
- represents
- * the number of bytes successfully written.
-
+ * represents the number of bytes successfully written.
+ *
  * On a regular file, if this incremented file offset is greater than the
- length
- * of the file, the length of the file shall be set to this file offset.
+ * length of the file, the length of the file shall be set to this file offset.
  */
 static ssize_t
-spfs_write(struct file *file, const char __user *buf, size_t len,
+spfs_write(struct file *file, const char __user *in_buf, size_t in_len,
            loff_t *ppos) {
   int res;
   struct spfs_inode *inode;
   struct super_block *sb;
   struct spfs_super_block *sbi;
-  unsigned long file_length = 0;
 
-  loff_t pos = *ppos;
+  loff_t traversed_data_len = 0;
   ssize_t written = 0;
-
-  printk(KERN_INFO "spfs_write()\n");
+  loff_t pos;
 
   if (!ppos) {
     return -EINVAL;
   }
 
-  if (len == 0) {
+  pos = *ppos;
+
+  printk(KERN_INFO "spfs_write()\n");
+
+  if (in_len == 0) {
     return 0;
   }
 
   BUG_ON(!file);
 
-  inode = SPFS_INODE(file->f_inode);
+  inode = SPFS_INODE(file_inode(file));
 
   if (!S_ISREG(inode->i_inode.i_mode)) {
     return -EINVAL;
@@ -749,6 +812,7 @@ spfs_write(struct file *file, const char __user *buf, size_t len,
   {
     sector_t start;
 
+    // XXX interruptible
     mutex_lock(&inode->lock);
     start = inode->start;
   Lit:
@@ -772,25 +836,26 @@ spfs_write(struct file *file, const char __user *buf, size_t len,
         return res;
       }
 
-      if (block.length != block.capacity) {
-        BUG_ON(block.next);
-      }
-
       con = MIN(pos, spfs_sb_remaining(bh, bh_pos));
       pos -= con;
       bh_pos += con;
       if (pos == 0) {
-        con = MIN(len, spfs_sb_remaining(bh, bh_pos));
+        /* We have counted down to the desired position by traversing the file
+         * blocks. Meaning we can now start to write from $in_buf to $bh
+         */
 
+        con = MIN(in_len, spfs_sb_remaining(bh, bh_pos));
         if (con > 0) {
           size_t ipos;
-          copy_from_user(/*dest*/ bh->b_data + bh_pos, /*src*/ buf, con);
-          buf += con;
-          len -= con;
+
+          copy_from_user(/*dest*/ bh->b_data + bh_pos, /*src*/ in_buf, con);
+          in_buf += con;
+          in_len -= con;
           bh_pos += con;
           block.length += con;
+          written += con;
 
-          /* Write back block.length */
+          /* Write back $block.length */
           ipos = 0;
           res = spfs_make_file_block(bh, &ipos, &block);
           if (res) {
@@ -801,24 +866,23 @@ spfs_write(struct file *file, const char __user *buf, size_t len,
           block_dirty = true;
         }
       }
-      file_length += block.length;
+      traversed_data_len += block.length;
 
-      if (len > 0) {
-        BUG_ON(block.length != block.capacity);
-
+      if (in_len > 0) {
+        /* We have handled current file block, onto the next.
+         */
         if (block.next == 0) {
           size_t ipos;
-          *ppos = file_length;
           pos = 0;
 
-          /*allocate block.next to make sapce for $buf */
-          block.next = spfs_file_block_alloc(sb, len);
+          /* Allocate $block.next to make space for $in_buf */
+          block.next = spfs_file_block_alloc(sb, in_len);
           if (!block.next) {
             // cleanup
             return -EINVAL;
           }
 
-          /* Write back block.next */
+          /* Write back $block.next */
           ipos = 0;
           res = spfs_make_file_block(bh, &ipos, &block);
           if (res) {
@@ -838,20 +902,19 @@ spfs_write(struct file *file, const char __user *buf, size_t len,
       start = block.next;
       goto Lit;
     } else {
-      /*
-       * We only get here we the initial spfs_inode.start pointer is 0
+      /* We only get here we the initial $spfs_inode.start pointer is 0
        */
-      start = spfs_file_block_alloc(sb, len);
+      start = spfs_file_block_alloc(sb, in_len);
       if (!start) {
         // cleanup
         return -EINVAL;
       }
 
-      mutex_lock(&sbi->tree.lock);
-
+      mutex_lock(&sbi->tree.lock); // XXX read lock
       res = spfs_btree_modify(&sbi->tree, inode->i_inode.i_ino, &start,
                               spfs_modify_start_cb);
       mutex_unlock(&sbi->tree.lock);
+
       if (res) {
         // cleanup
         return res;
@@ -861,11 +924,17 @@ spfs_write(struct file *file, const char __user *buf, size_t len,
       goto Lit;
     }
 
+    BUG_ON(in_len != 0);
+
+    if (written > 0) {
+      loff_t sz = i_size_read(&inode->i_inode);
+      i_size_write(&inode->i_inode, sz + written);
+    }
     mutex_unlock(&inode->lock);
     *ppos += written;
   }
 
-  return 0;
+  return written;
 }
 
 static const struct file_operations spfs_file_ops = {
@@ -907,6 +976,9 @@ spfs_iterate(struct file *file, struct dir_context *ctx) {
 
 static const struct file_operations spfs_dir_ops = {
     /**/
+    .llseek = generic_file_llseek,
+    .read = generic_read_dir,
+
     .iterate = spfs_iterate,
     /**/
 };
@@ -1040,7 +1112,7 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
 
   root = spfs_inode_by_id(sb, sbi->root_id);
   if (IS_ERR(root)) {
-    root = spfs_new_inode(sb, S_IFDIR);
+    root = spfs_new_inode(sb, NULL, S_IFDIR);
     if (IS_ERR(root)) {
       res = -ENOMEM;
       goto Lerr;

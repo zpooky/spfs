@@ -46,10 +46,6 @@ struct btree_bubble {
 int
 spfs_btree_init(struct super_block *sb, struct spfs_btree *tree,
                 sector_t start) {
-  /* struct address_space *mapping; */
-  /* struct page *page; */
-  /* unsigned int size; */
-
   struct spfs_super_block *sbi;
 
   BUG_ON(!tree);
@@ -68,8 +64,6 @@ spfs_btree_init(struct super_block *sb, struct spfs_btree *tree,
   tree->blocks = 1;
   tree->start = start;
   /* } */
-
-  /*XXX btree magic*/
 
   return 0;
 }
@@ -362,50 +356,68 @@ bnode_bin_insert_b(struct spfs_btree *self, struct spfs_bnode *node,
 static int
 spfs_inode_parse(struct buffer_head *bh, struct spfs_inode *out) {
   struct inode *out_inode = &out->i_inode;
-  // XXX magic
+  unsigned long magic;
   size_t pos = 0;
-  if (!spfs_sb_read_u32(bh, &pos, &out_inode->i_ino)) {
+
+  if (!spfs_sb_read_u32(bh, &pos, &magic)) {
     return -EIO;
   }
-  if (!spfs_sb_read_u32(bh, &pos, &out->size)) {
-    return -EIO;
+  if (magic != SPOOKY_FS_BTREE_MAGIC) {
+    return -EINVAL;
   }
-  if (!spfs_sb_read_u16(bh, &pos, &out_inode->i_mode)) {
-    return -EIO;
+
+  {
+    loff_t size;
+    if (!spfs_sb_read_u32(bh, &pos, &out_inode->i_ino)) {
+      return -EIO;
+    }
+    if (!spfs_sb_read_u64(bh, &pos, &size)) {
+      return -EIO;
+    }
+    if (!spfs_sb_read_u16(bh, &pos, &out_inode->i_mode)) {
+      return -EIO;
+    }
+    i_size_write(out_inode, size);
   }
 
   {
     unsigned long gid;
     unsigned long uid;
     if (!spfs_sb_read_u32(bh, &pos, &gid)) {
-      /* if (!spfs_sb_read_u32(bh, &pos, &out_inode->i_gid)) { */
       return -EIO;
     }
 
     if (!spfs_sb_read_u32(bh, &pos, &uid)) {
-      /* if (!spfs_sb_read_u32(bh, &pos, &out_inode->i_uid)) { */
       return -EIO;
     }
+
+    i_gid_write(out_inode, gid);
+    i_uid_write(out_inode, uid);
   }
 
   {
-    unsigned long atime;
-    unsigned long mtime;
-    unsigned long ctime;
-    if (!spfs_sb_read_u32(bh, &pos, &atime)) {
-      /* if (!spfs_sb_read_u32(bh, &pos, &out_inode->i_atime)) { */
+    unsigned long long atime;
+    unsigned long long mtime;
+    unsigned long long ctime;
+    if (!spfs_sb_read_u64(bh, &pos, &atime)) {
       return -EIO;
     }
 
-    /* if (!spfs_sb_read_u32(bh, &pos, &out_inode->i_mtime)) { */
-    if (!spfs_sb_read_u32(bh, &pos, &mtime)) {
+    if (!spfs_sb_read_u64(bh, &pos, &mtime)) {
       return -EIO;
     }
 
-    /* if (!spfs_sb_read_u32(bh, &pos, &out_inode->i_ctime)) { */
-    if (!spfs_sb_read_u32(bh, &pos, &ctime)) {
+    if (!spfs_sb_read_u64(bh, &pos, &ctime)) {
       return -EIO;
     }
+    out_inode->atime.tv_sec = atime;
+    out_inode->atime.tv_nsec = 0;
+
+    out_inode->mtime.tv_sec = mtime;
+    out_inode->mtime.tv_nsec = 0;
+
+    out_inode->ctime.tv_sec = ctime;
+    out_inode->ctime.tv_nsec = 0;
   }
 
   if (!spfs_sb_read_u32(bh, &pos, &out->start)) {
@@ -422,50 +434,50 @@ spfs_inode_parse(struct buffer_head *bh, struct spfs_inode *out) {
 static int
 spfs_inode_make(struct buffer_head *bh, const struct spfs_inode *in) {
   const struct inode *in_inode = &in->i_inode;
-  // XXX magic
   size_t pos = 0;
 
-  if (!spfs_sb_write_u32(bh, &pos, in_inode->i_ino)) {
-    return -EIO;
-  }
-  if (!spfs_sb_write_u32(bh, &pos, in->size)) {
-    return -EIO;
-  }
-  if (!spfs_sb_write_u16(bh, &pos, in_inode->i_mode)) {
+  if (!spfs_sb_write_u32(bh, &pos, SPOOKY_FS_BTREE_MAGIC)) {
     return -EIO;
   }
 
-  // TODO
   {
-    unsigned long gid = 0;
-    unsigned long uid = 0;
+    loff_t size = i_size_read(in_inode);
+    if (!spfs_sb_write_u32(bh, &pos, in_inode->i_ino)) {
+      return -EIO;
+    }
+    if (!spfs_sb_write_u64(bh, &pos, size)) {
+      return -EIO;
+    }
+    if (!spfs_sb_write_u16(bh, &pos, in_inode->i_mode)) {
+      return -EIO;
+    }
+  }
+
+  {
+    unsigned long gid = i_gid_read(in_inode);
+    unsigned long uid = i_uid_read(in_inode);
     if (!spfs_sb_write_u32(bh, &pos, gid)) {
-      /* if (!spfs_sb_write_u32(bh, &pos, in->gid)) { */
       return -EIO;
     }
 
     if (!spfs_sb_write_u32(bh, &pos, uid)) {
-      /* if (!spfs_sb_write_u32(bh, &pos, in->uid)) { */
       return -EIO;
     }
   }
 
   {
-    unsigned long atime = 0;
-    unsigned long mtime = 0;
-    unsigned long ctime = 0;
-    if (!spfs_sb_write_u32(bh, &pos, atime)) {
-      /* if (!spfs_sb_write_u32(bh, &pos, in->atime)) { */
+    unsigned long long atime = in_inode.atime.tv_sec;
+    unsigned long long mtime = in_inode.mtime.tv_sec;
+    unsigned long long ctime = in_inode.ctime.tv_sec;
+    if (!spfs_sb_write_u64(bh, &pos, atime)) {
       return -EIO;
     }
 
-    if (!spfs_sb_write_u32(bh, &pos, mtime)) {
-      /* if (!spfs_sb_write_u32(bh, &pos, in->mtime)) { */
+    if (!spfs_sb_write_u64(bh, &pos, mtime)) {
       return -EIO;
     }
 
-    if (!spfs_sb_write_u32(bh, &pos, ctime)) {
-      /* if (!spfs_sb_write_u32(bh, &pos, in->ctime)) { */
+    if (!spfs_sb_write_u64(bh, &pos, ctime)) {
       return -EIO;
     }
   }
