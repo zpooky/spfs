@@ -35,15 +35,10 @@
  * - typedef u64 blkcnt_t;
  *
  * # Pointer error
- * Do not mix NULL return and PTR_ERR
- *
  * ## check error
  * if (IS_ERR(ptr)) // check if error ptr
- *
  * ## ptr error -> int error
- *
  * ## int error -> ptr error
- *
  * ##???
  * return PTR_ERR(ptr);
  * return ERR_PTR(PTR_ERR(inode));
@@ -76,9 +71,7 @@ static const struct file_operations spfs_file_ops;
 static const struct file_operations spfs_dir_ops;
 static const struct super_operations spfs_super_ops;
 
-/*
- *
- * TODO add child to parent directory inode start list
+/* TODO support File blocks > block_size (currently bugged)
  * TODO KM unload write back
  * TODO inode ref count
  * TODO inode correct locking
@@ -87,6 +80,9 @@ static const struct super_operations spfs_super_ops;
  *
  * XXX optimize sb_bread without reading for block device when we are not
  * interested in the content of the read, we only want to overwrite all content
+ *
+ * XXX more file block $index togther with $length, not just $start sector_t in
+ * spfs_inode struct.
  */
 
 //=====================================
@@ -257,69 +253,19 @@ Lout:
 }
 
 //=====================================
-static int
-spfs_add_child(struct inode *parent, spfs_ino id) {
-  /* #inc_nlink()
-   * increment an inode's link count
-   */
-  inc_nlink(parent);
-
-  // TODO
-  return 0;
-}
-
-/* # Create file */
-static int
-spfs_create(struct inode *parent, struct dentry *subject, umode_t mode,
-            bool excl) {
-  int res;
-  BUG_ON(!S_ISREG(mode));
-
-  // newly created inode-lock {
-  res = spfs_generic_create(parent, subject, mode); // XXX excl?
-  if (!res) {
-    spfs_ino id = subject->d_inode->i_ino;
-    res = spfs_add_child(parent, id);
-  }
-  //}
-
-  return res;
-}
-
-//=====================================
-/* # Create directory */
-static int
-spfs_mkdir(struct inode *parent, struct dentry *subject, umode_t mode) {
-  int res;
-  BUG_ON(!S_ISDIR(mode));
-
-  // newly created inode-lock {
-  res = spfs_generic_create(parent, subject, mode);
-  if (!res) {
-    spfs_ino id = subject->d_inode->i_ino;
-    res = spfs_add_child(parent, id);
-  }
-  //}
-
-  return res;
-}
-
-//=====================================
-typedef bool (*for_all_cb)(void *, struct spfs_inode *);
-
-struct spfs_directory_block {
+struct spfs_dir_block {
   sector_t next;
   unsigned long children;
 };
 
 static int
-spfs_parse_directory_block(struct buffer_head *bh, size_t *pos,
-                           struct spfs_directory_block *out) {
-  unsigned long magic;
-  /*
-   *        child:[ino: u64]
+spfs_parse_dir_block(struct buffer_head *bh, size_t *pos,
+                     struct spfs_dir_block *out) {
+  /*        child:[ino: u64]
    * folder_block:[next:sector_t, children:u32, cx: child[children]]
    */
+
+  unsigned long magic;
   if (!spfs_sb_read_u32(bh, pos, &magic)) {
     return -EINVAL;
   }
@@ -336,6 +282,221 @@ spfs_parse_directory_block(struct buffer_head *bh, size_t *pos,
 
   return 0;
 }
+
+static int
+spfs_make_dir_block(struct buffer_head *bh, size_t *pos,
+                    const struct spfs_dir_block *block) {
+
+  if (!spfs_sb_write_u32(bh, pos, SPOOKY_FS_DIR_BLOCK_MAGIC)) {
+    return -EINVAL;
+  }
+  if (!spfs_sb_write_u32(bh, pos, out->next)) {
+    return -EINVAL;
+  }
+  if (!spfs_sb_write_u32(bh, pos, out->children)) {
+    return EINVAL;
+  }
+
+  return 0;
+}
+
+static bool
+spfs_dir_is_full(struct super_block *sb, const struct spfs_dir_block *block) {
+  // XXX make correct
+  return block.children == 100;
+}
+
+static int
+spfs_dir_write_child(struct buffer_head *bh, size_t start, size_t idx,
+                     spfs_ino child) {
+  size_t sz = sizeof(child);
+  size_t offset = start + (idx * sz);
+
+  if (spfs_sb_remaining(bh, offset) < sz) {
+    return -EIO;
+  }
+
+  if (!spfs_sb_write_u32(bh, &offset, child)) {
+    return -EIO;
+  }
+
+  return 0;
+}
+
+static sector_t
+spfs_dir_block_alloc(struct super_block *sb, size_t *bh_pos,
+                     struct buffer_head **pbh, struct spfs_dir_block *block) {
+  struct spfs_super_block *sbi;
+  size_t blocks;
+  sector_t result;
+
+  sbi = sb->s_fs_info;
+
+  BUG_ON(!sbi);
+
+  result = spfs_free_alloc(&sbi->free_list, 1);
+  if (result) {
+    int res;
+    struct buffer_head *bh;
+
+    block.next = 0;
+    block.children = 0;
+
+    bh = sb_bread(sb, result);
+    if (!bh) {
+      // cleanup
+      return 0;
+    }
+
+    res = spfs_make_dir_block(bh, bh_pos, &block);
+    if (res) {
+      // cleanup
+      return 0;
+    }
+
+    *pbh = bh;
+    return result;
+  }
+
+  return 0;
+}
+
+static int
+spfs_add_child(struct super_block *sb, struct spfs_inode *parent,
+               struct inode *child) {
+  int res;
+  sector_t start;
+
+  mutex_lock(&parent->lock);
+  start = parent->start;
+// TODO this wont work when the first is full and the next is created...
+
+Lit:
+  if (start) {
+    struct spfs_dir_block block = {};
+    struct buffer_head *bh;
+    size_t bh_pos;
+    bool done = false;
+
+    bh = sb_bread(sb, start);
+    if (!bh) {
+      res = -EIO;
+      goto Lunlock;
+    }
+
+    bh_pos = 0;
+    res = spfs_parse_dir_block(bh, &bh_pos, &block);
+    if (res) {
+      // cleanup
+      res = -EINVAL;
+      goto Lunlock;
+    }
+
+    if (!spfs_dir_is_full(sb, &block)) {
+      res = spfs_dir_write_child(bh, bh_pos, block.children++, child->i_ino);
+
+      /* Update heder with $block.chidren */
+      bh_pos = 0;
+      res = spfs_make_dir_block(bh, &bh_pos, &block);
+
+      mark_buffer_dirty(bh);
+      done = true;
+    }
+
+    brelse(bh);
+
+    if (!done) {
+      start = block.next;
+      goto Lit;
+    }
+  } else {
+    struct spfs_dir_block block = {};
+    struct buffer_head *bh;
+    size_t bh_pos = 0;
+
+    parent->start = spfs_dir_block_alloc(sb, &bh_pos, &bh, &block);
+    if (!parent->start) {
+      goto Lunlock;
+    }
+
+    res = spfs_dir_write_child(bh, bh_pos, block.children++, child->i_ino);
+
+    /* Update heder with $block.chidren */
+    bh_pos = 0;
+    res = spfs_make_dir_block(bh, &bh_pos, &block);
+
+    mark_buffer_dirty(bh);
+    brelse(bh);
+  }
+
+  res = 0;
+Lunlock:
+  mutex_unlock(&parent->lock);
+  return res;
+}
+
+/* # Create file */
+static int
+spfs_create(struct inode *parent, struct dentry *subject, umode_t mode,
+            bool excl) {
+  int res;
+  struct super_block *sb;
+
+  BUG_ON(!S_ISREG(mode));
+
+  sb = parent->i_sb;
+
+  BUG_ON(!sb);
+
+  // newly created inode-lock {
+  // XXX excl?
+  res = spfs_generic_create(parent, subject, mode);
+  if (!res) {
+    struct inode *inode = d_inode(subject);
+    BUG_ON(!inode);
+
+    /* #inc_nlink()
+     * increment an inode's link count
+     */
+    inc_nlink(&parent->i_inode);
+
+    res = spfs_add_child(sb, SPFS_INODE(parent), inode);
+  }
+  //}
+
+  return res;
+}
+
+//=====================================
+/* # Create directory */
+static int
+spfs_mkdir(struct inode *parent, struct dentry *subject, umode_t mode) {
+  int res;
+  struct super_block *sb;
+
+  BUG_ON(!S_ISDIR(mode));
+
+  sb = parent->i_sb;
+
+  BUG_ON(!sb);
+
+  // newly created inode-lock {
+  res = spfs_generic_create(parent, subject, mode);
+  if (!res) {
+    struct inode *inode = d_inode(subject);
+    BUG_ON(!inode);
+
+    inc_nlink(&parent->i_inode);
+
+    res = spfs_add_child(sb, SPFS_INODE(parent), inode);
+  }
+  //}
+
+  return res;
+}
+
+//=====================================
+typedef bool (*for_all_cb)(void *, struct spfs_inode *);
 
 static int
 spfs_for_all_children(struct spfs_inode *parent, void *closure, for_all_cb f) {
@@ -360,7 +521,7 @@ spfs_for_all_children(struct spfs_inode *parent, void *closure, for_all_cb f) {
 Lit:
   if (child_list) {
     struct buffer_head *bh;
-    struct spfs_directory_block block;
+    struct spfs_dir_block block;
     unsigned long i;
     size_t bh_pos;
 
@@ -371,7 +532,7 @@ Lit:
     }
 
     bh_pos = 0;
-    res = spfs_parse_directory_block(bh, &bh_pos, &block);
+    res = spfs_parse_dir_block(bh, &bh_pos, &block);
     if (res) {
       // cleanup
       goto Lunlock;
@@ -779,13 +940,14 @@ spfs_write(struct file *file, const char __user *in_buf, size_t in_len,
   struct super_block *sb;
   struct spfs_super_block *sbi;
 
-  loff_t traversed_data_len = 0;
   ssize_t written = 0;
   loff_t pos;
 
   if (!ppos) {
     return -EINVAL;
   }
+
+  /* XXX EFBIG            */
 
   pos = *ppos;
 
@@ -866,7 +1028,6 @@ spfs_write(struct file *file, const char __user *in_buf, size_t in_len,
           block_dirty = true;
         }
       }
-      traversed_data_len += block.length;
 
       if (in_len > 0) {
         /* We have handled current file block, onto the next.
