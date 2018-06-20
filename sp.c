@@ -71,6 +71,18 @@ static const struct file_operations spfs_file_ops;
 static const struct file_operations spfs_dir_ops;
 static const struct super_operations spfs_super_ops;
 
+/* TODO map page region of file block?
+ *
+ * .tmp_sp.o: warning: objtool: spfs_read()+0x26: sibling call from callable
+ *            instruction with modified stack frame
+ * .tmp_sp.o: warning: objtool: spfs_write()+0x26: sibling call from callable
+ *            instruction with modified stack frame
+ * .tmp_sp.o: warning: objtool: spfs_fill_super_block()+0x2a: sibling call from
+ *            callable instruction with modified stack frame
+ * .tmp_sp.o: warning: objtool: spfs_fill_super_block.cold.17()+0x52: return
+ *            with modified stack frame
+ */
+
 /* TODO support File blocks > block_size (currently bugged)
  * TODO KM unload write back
  * TODO inode ref count
@@ -1238,6 +1250,7 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
   const sector_t super_start = 0;
 
   BUG_ON(!sb);
+  BUG_ON(!sb->s_bdev); // TODO is NULL
 
   printk(KERN_INFO "spfs_kill_super_block()\n");
 
@@ -1246,16 +1259,18 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
     return -ENOMEM;
   }
 
+  // doc
+  sb->s_magic = SPOOKY_FS_SUPER_MAGIC;
   /* Filesystem private info */
   sb->s_fs_info = sbi;
   /*  */
-  /* sb->s_flags |= MS_NODIRATIME; */
-  // doc
-  sb->s_magic = SPOOKY_FS_SUPER_MAGIC;
   sb->s_op = &spfs_super_ops;
-  if (sb_set_blocksize(sb, SPOOKY_FS_INITIAL_BLOCK_SIZE) == 0) {
-    res = -EINVAL;
-    goto Lerr;
+
+  if (sb->s_bdev) {
+    if (sb_set_blocksize(sb, SPOOKY_FS_INITIAL_BLOCK_SIZE) == 0) {
+      res = -EINVAL;
+      goto Lerr;
+    }
   }
 
   res = spfs_super_block_init(sb, sbi, super_start);
@@ -1263,9 +1278,11 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
     goto Lerr;
   }
 
-  if (sb_set_blocksize(sb, sbi->block_size) == 0) {
-    res = -EINVAL;
-    goto Lerr;
+  if (sb->s_bdev) {
+    if (sb_set_blocksize(sb, sbi->block_size) == 0) {
+      res = -EINVAL;
+      goto Lerr;
+    }
   }
 
   res = spfs_btree_init(sb, &sbi->tree, sbi->btree_offset);
@@ -1302,9 +1319,13 @@ Lerr:
 static struct dentry *
 spfs_mount(struct file_system_type *fs_type, int flags, const char *dev_name,
            void *data) {
+  /* mount_bdev: mount a filesystem residing on a block device
+   * mount_nodev: mount a filesystem that is not backed by a device
+   */
+
   printk(KERN_INFO "spfs_mount(dev_name[%s])\n", dev_name);
-  /*return mount_bdev(fs_type, flags, dev_name, data, spfs_fill_super_block);*/
-  return mount_nodev(fs_type, flags, data, spfs_fill_super_block);
+  return mount_bdev(fs_type, flags, dev_name, data, spfs_fill_super_block);
+  /* return mount_nodev(fs_type, flags, data, spfs_fill_super_block); */
 }
 
 //=====================================

@@ -4,15 +4,16 @@ https://www.tldp.org/LDP/lkmpg/2.6/html/x569.html
 https://github.com/cirosantilli/linux-kernel-module-cheat#setup-types
 https://sysplay.in/blog/category/linux-device-drivers/
 
-
-## hfs
-super.c:hfs_fill_super()
-  mdb.c:hfs_mdb_get(sb) # build fs, including btree & bitmaps
-
-# Resources
+# VFS
 - https://kukuruku.co/post/writing-a-file-system-in-linux-kernel/
+
 - https://github.com/krinkinmu/aufs
   https://kukuruku.co/post/teaching-the-file-system-to-read/
+
+- https://www.win.tue.nl/~aeb/linux/lk/lk-8.html
+
+- https://www.kernel.org/doc/html/latest/filesystems/index.html?highlight=vfs#the-linux-vfs
+  https://www.kernel.org/doc/htmldocs/filesystems/vfs.html
 
 #general
 - https://github.com/gurugio/book_linuxkernel_blockdrv
