@@ -151,5 +151,6 @@ spfs_free_alloc(struct spfs_free_list *free_list, size_t blocks) {
 /* ===================================== */
 int
 spfs_free_dealloc(struct spfs_free_list *fl, sector_t root, size_t blocks) {
+  // TODO
   return 0;
 }

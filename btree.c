@@ -410,14 +410,15 @@ spfs_inode_parse(struct buffer_head *bh, struct spfs_inode *out) {
     if (!spfs_sb_read_u64(bh, &pos, &ctime)) {
       return -EIO;
     }
-    out_inode->atime.tv_sec = atime;
-    out_inode->atime.tv_nsec = 0;
 
-    out_inode->mtime.tv_sec = mtime;
-    out_inode->mtime.tv_nsec = 0;
+    out_inode->i_atime.tv_sec = atime;
+    out_inode->i_atime.tv_nsec = 0;
 
-    out_inode->ctime.tv_sec = ctime;
-    out_inode->ctime.tv_nsec = 0;
+    out_inode->i_mtime.tv_sec = mtime;
+    out_inode->i_mtime.tv_nsec = 0;
+
+    out_inode->i_ctime.tv_sec = ctime;
+    out_inode->i_ctime.tv_nsec = 0;
   }
 
   if (!spfs_sb_read_u32(bh, &pos, &out->start)) {
@@ -466,9 +467,9 @@ spfs_inode_make(struct buffer_head *bh, const struct spfs_inode *in) {
   }
 
   {
-    unsigned long long atime = in_inode.atime.tv_sec;
-    unsigned long long mtime = in_inode.mtime.tv_sec;
-    unsigned long long ctime = in_inode.ctime.tv_sec;
+    unsigned long long atime = in_inode->i_atime.tv_sec;
+    unsigned long long mtime = in_inode->i_mtime.tv_sec;
+    unsigned long long ctime = in_inode->i_ctime.tv_sec;
     if (!spfs_sb_write_u64(bh, &pos, atime)) {
       return -EIO;
     }

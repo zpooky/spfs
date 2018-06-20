@@ -103,8 +103,9 @@ spfs_setup_inode_fp(struct inode *inode) {
     BUG();
   }
 }
+
 static struct spfs_inode *
-spfs_new_inode(struct super_block *sb, struct dentry *dentry, umode_t mode) {
+spfs_new_inode(struct super_block *sb, struct inode *parent, umode_t mode) {
   struct spfs_super_block *sbi;
   struct inode *inode;
 
@@ -124,10 +125,12 @@ spfs_new_inode(struct super_block *sb, struct dentry *dentry, umode_t mode) {
       mutex_unlock(&sbi->id_lock);
     }
 
-    /* #inode_init_owner()
-     * Init uid,gid,mode for new inode according to posix standards
-     */
-    inode_init_owner(inode, dentry, mode);
+    if (parent) {
+      /* #inode_init_owner()
+       * Init uid,gid,mode for new inode according to posix standards
+       */
+      inode_init_owner(inode, parent, mode);
+    }
 
     inode->i_atime = inode->i_mtime = inode->i_ctime = current_time(inode);
 
@@ -214,7 +217,7 @@ spfs_generic_create(struct inode *parent, struct dentry *dentry, umode_t mode) {
   BUG_ON(!sbi);
 
   res = -ENOENT;
-  inode = spfs_new_inode(sb, dentry, mode);
+  inode = spfs_new_inode(sb, parent, mode);
   if (inode) {
     struct qstr *name = &dentry->d_name;
     if (name->len > sizeof(inode->name)) {
@@ -290,10 +293,10 @@ spfs_make_dir_block(struct buffer_head *bh, size_t *pos,
   if (!spfs_sb_write_u32(bh, pos, SPOOKY_FS_DIR_BLOCK_MAGIC)) {
     return -EINVAL;
   }
-  if (!spfs_sb_write_u32(bh, pos, out->next)) {
+  if (!spfs_sb_write_u32(bh, pos, block->next)) {
     return -EINVAL;
   }
-  if (!spfs_sb_write_u32(bh, pos, out->children)) {
+  if (!spfs_sb_write_u32(bh, pos, block->children)) {
     return EINVAL;
   }
 
@@ -303,7 +306,7 @@ spfs_make_dir_block(struct buffer_head *bh, size_t *pos,
 static bool
 spfs_dir_is_full(struct super_block *sb, const struct spfs_dir_block *block) {
   // XXX make correct
-  return block.children == 100;
+  return block->children == 100;
 }
 
 static int
@@ -327,7 +330,6 @@ static sector_t
 spfs_dir_block_alloc(struct super_block *sb, size_t *bh_pos,
                      struct buffer_head **pbh, struct spfs_dir_block *block) {
   struct spfs_super_block *sbi;
-  size_t blocks;
   sector_t result;
 
   sbi = sb->s_fs_info;
@@ -339,8 +341,8 @@ spfs_dir_block_alloc(struct super_block *sb, size_t *bh_pos,
     int res;
     struct buffer_head *bh;
 
-    block.next = 0;
-    block.children = 0;
+    block->next = 0;
+    block->children = 0;
 
     bh = sb_bread(sb, result);
     if (!bh) {
@@ -348,7 +350,7 @@ spfs_dir_block_alloc(struct super_block *sb, size_t *bh_pos,
       return 0;
     }
 
-    res = spfs_make_dir_block(bh, bh_pos, &block);
+    res = spfs_make_dir_block(bh, bh_pos, block);
     if (res) {
       // cleanup
       return 0;
@@ -369,7 +371,7 @@ spfs_add_child(struct super_block *sb, struct spfs_inode *parent,
 
   mutex_lock(&parent->lock);
   start = parent->start;
-// TODO this wont work when the first is full and the next is created...
+  // TODO this wont work when the first is full and the next is created...
 
 Lit:
   if (start) {
@@ -458,7 +460,7 @@ spfs_create(struct inode *parent, struct dentry *subject, umode_t mode,
     /* #inc_nlink()
      * increment an inode's link count
      */
-    inc_nlink(&parent->i_inode);
+    inc_nlink(parent);
 
     res = spfs_add_child(sb, SPFS_INODE(parent), inode);
   }
@@ -486,7 +488,7 @@ spfs_mkdir(struct inode *parent, struct dentry *subject, umode_t mode) {
     struct inode *inode = d_inode(subject);
     BUG_ON(!inode);
 
-    inc_nlink(&parent->i_inode);
+    inc_nlink(parent);
 
     res = spfs_add_child(sb, SPFS_INODE(parent), inode);
   }
@@ -650,15 +652,17 @@ spfs_lookup(struct inode *parent, struct dentry *dentry, unsigned int flags) {
 
   result = spfs_inode_by_name(sb, SPFS_INODE(parent), dentry);
   if (result) {
-    if (!IS_ERR(result)) {
+    if (IS_ERR(result)) {
+      return ERR_PTR(PTR_ERR(result));
+    } else {
       /* #d_add()
        * XXX
        * This adds the entry to the hash queues and initializes inode.
        */
       d_add(dentry, result);
     }
-    // XXX propagate ERR
-    return result;
+
+    return dentry;
   }
 
   return NULL;

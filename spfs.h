@@ -17,11 +17,4 @@ typedef unsigned long spfs_ino;
 
 typedef spfs_ino spfs_be_ino;
 
-// __be32	di_size;
-// __be32	di_gid;
-// __be32	di_uid;
-// __be32	di_mode;
-// __be64	di_ctime;
-
-
 #endif

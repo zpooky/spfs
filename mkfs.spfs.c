@@ -16,17 +16,29 @@
 
 #define SPOOKY_FS_BLOCK_SIZE 4096
 
+/* #define U64 uint64_t */
+/*  */
+/* #define ENDIAN_SWAP_U64(val)                                                   \ */
+/*   ((U64)((((U64)(val) & (U64)0x00000000000000ff) << 56) |                      \ */
+/*          (((U64)(val) & (U64)0x000000000000ff00) << 40) |                      \ */
+/*          (((U64)(val) & (U64)0x0000000000ff0000) << 24) |                      \ */
+/*          (((U64)(val) & (U64)0x00000000ff000000) << 8) |                       \ */
+/*          (((U64)(val) & (U64)0x000000ff00000000) >> 8) |                       \ */
+/*          (((U64)(val) & (U64)0x0000ff0000000000) >> 24) |                      \ */
+/*          (((U64)(val) & (U64)0x00ff000000000000) >> 40) |                      \ */
+/*          (((U64)(val) & (U64)0xff00000000000000) >> 56))) */
+
 struct spfs_super_block_wire {
-  unsigned int magic;
-  unsigned int version;
-  unsigned int block_size;
-  unsigned int dummy;
+  uint32_t magic;
+  uint32_t version;
+  uint32_t block_size;
+  uint32_t dummy;
 
-  spfs_ino id;
-  spfs_ino root_id;
+  uint32_t id;
+  uint32_t root_id;
 
-  spfs_offset btree;
-  spfs_offset free_list;
+  uint32_t btree;
+  uint32_t free_list;
 
   /* transient: { */
   size_t blocks;
@@ -34,16 +46,16 @@ struct spfs_super_block_wire {
 };
 
 struct spfs_free_list {
-  unsigned int magic;
-  unsigned int entries;
+  uint32_t magic;
+  uint32_t entries;
 
   /* list of spfs_free_list */
-  spfs_offset next;
+  uint32_t next;
 };
 
 struct spfs_free_entry {
-  spfs_offset start;
-  unsigned int blocks;
+  uint32_t start;
+  uint32_t blocks;
 };
 
 static size_t
@@ -110,34 +122,39 @@ zero_fill(int fd, size_t bytes) {
 }
 
 static int
-mkfs_write_u32(unsigned char *buffer, ssize_t *pos, unsigned int value) {
-  value = htonl(value);
+mkfs_write_u32(unsigned char *buffer, ssize_t *pos, const uint32_t *value) {
+  uint32_t in = htonl(*value);
 
-  memcpy(buffer + *pos, &value, sizeof(value));
-  *pos += sizeof(value);
-
-  return 0;
-}
-
-static int
-mkfs_write_u64(unsigned char *buffer, ssize_t *pos, unsigned long value) {
-  /* TODO value = htonll(value); */
-
-  memcpy(buffer + *pos, &value, sizeof(value));
-  *pos += sizeof(value);
+  memcpy(buffer + *pos, &in, sizeof(in));
+  *pos += sizeof(in);
 
   return 0;
 }
 
-static int
-mkfs_write_ino(unsigned char *buffer, ssize_t *pos, spfs_ino value) {
-  return mkfs_write_u64(buffer, pos, value);
-}
+/* static int
+ * mkfs_write_u64(unsigned char *buffer, ssize_t *pos, uint64_t value) {
+ *   value = ENDIAN_SWAP_U64(value);
+ * 
+ *   memcpy(buffer + *pos, &value, sizeof(value));
+ *   *pos += sizeof(value);
+ * 
+ *   return 0;
+ * }
+ */
 
-static int
-mkfs_write_offset(unsigned char *buffer, ssize_t *pos, spfs_offset value) {
-  return mkfs_write_u64(buffer, pos, value);
-}
+/*
+ * static int
+ * mkfs_write_ino(unsigned char *buffer, ssize_t *pos, spfs_ino value) {
+ *   return mkfs_write_u32(buffer, pos, &value);
+ * }
+ */
+
+/*
+ * static int
+ * mkfs_write_offset(unsigned char *buffer, ssize_t *pos, uint32_t value) {
+ *   return mkfs_write_u32(buffer, pos, &value);
+ * }
+ */
 
 static int
 super_block(int fd, const struct spfs_super_block_wire *super) {
@@ -146,30 +163,30 @@ super_block(int fd, const struct spfs_super_block_wire *super) {
   unsigned char buffer[1024];
   ssize_t pos = 0;
 
-  if (mkfs_write_u32(buffer, &pos, super->magic)) {
+  if (mkfs_write_u32(buffer, &pos, &super->magic)) {
     return 1;
   }
-  if (mkfs_write_u32(buffer, &pos, super->version)) {
+  if (mkfs_write_u32(buffer, &pos, &super->version)) {
     return 1;
   }
-  if (mkfs_write_u32(buffer, &pos, super->block_size)) {
+  if (mkfs_write_u32(buffer, &pos, &super->block_size)) {
     return 1;
   }
-  if (mkfs_write_u32(buffer, &pos, super->dummy)) {
-    return 1;
-  }
-
-  if (mkfs_write_ino(buffer, &pos, super->id)) {
-    return 1;
-  }
-  if (mkfs_write_ino(buffer, &pos, super->root_id)) {
+  if (mkfs_write_u32(buffer, &pos, &super->dummy)) {
     return 1;
   }
 
-  if (mkfs_write_offset(buffer, &pos, super->btree)) {
+  if (mkfs_write_u32(buffer, &pos, &super->id)) {
     return 1;
   }
-  if (mkfs_write_offset(buffer, &pos, super->free_list)) {
+  if (mkfs_write_u32(buffer, &pos, &super->root_id)) {
+    return 1;
+  }
+
+  if (mkfs_write_u32(buffer, &pos, &super->btree)) {
+    return 1;
+  }
+  if (mkfs_write_u32(buffer, &pos, &super->free_list)) {
     return 1;
   }
 
@@ -185,13 +202,13 @@ super_block(int fd, const struct spfs_super_block_wire *super) {
 static int
 mkfs_write_free_list_header(unsigned char *buffer, ssize_t *pos,
                             const struct spfs_free_list *header) {
-  if (mkfs_write_u32(buffer, pos, /*length*/ header->magic)) {
+  if (mkfs_write_u32(buffer, pos, &header->magic)) {
     return 1;
   }
-  if (mkfs_write_u32(buffer, pos, /*length*/ header->entries)) {
+  if (mkfs_write_u32(buffer, pos, &header->entries)) {
     return 1;
   }
-  if (mkfs_write_offset(buffer, pos, /*next*/ header->next)) {
+  if (mkfs_write_u32(buffer, pos, &header->next)) {
     return 1;
   }
 
@@ -201,10 +218,10 @@ mkfs_write_free_list_header(unsigned char *buffer, ssize_t *pos,
 static int
 mkfs_write_free_entry(unsigned char *buffer, ssize_t *pos,
                       const struct spfs_free_entry *entry) {
-  if (mkfs_write_offset(buffer, pos, entry->start)) {
+  if (mkfs_write_u32(buffer, pos, &entry->start)) {
     return 1;
   }
-  if (mkfs_write_u32(buffer, pos, entry->blocks)) {
+  if (mkfs_write_u32(buffer, pos, &entry->blocks)) {
     return 1;
   }
 
