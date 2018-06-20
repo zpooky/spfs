@@ -1236,6 +1236,9 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
   int res;
 
   const sector_t super_start = 0;
+
+  BUG_ON(!sb);
+
   printk(KERN_INFO "spfs_kill_super_block()\n");
 
   sbi = kzalloc(sizeof(*sbi), GFP_KERNEL);
@@ -1299,8 +1302,9 @@ Lerr:
 static struct dentry *
 spfs_mount(struct file_system_type *fs_type, int flags, const char *dev_name,
            void *data) {
-  printk(KERN_INFO "spfs_mount()\n");
-  return mount_bdev(fs_type, flags, dev_name, data, spfs_fill_super_block);
+  printk(KERN_INFO "spfs_mount(dev_name[%s])\n", dev_name);
+  /*return mount_bdev(fs_type, flags, dev_name, data, spfs_fill_super_block);*/
+  return mount_nodev(fs_type, flags, data, spfs_fill_super_block);
 }
 
 //=====================================
@@ -1314,7 +1318,7 @@ spfs_put_super(struct super_block *sb) {
    */
   struct spfs_super_block *sbi;
 
-  printk(KERN_INFO "spfs_kill_superblock()\n");
+  printk(KERN_INFO "spfs_put_super()\n");
 
   sbi = sb->s_fs_info;
   if (sbi) {

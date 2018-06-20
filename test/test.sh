@@ -1,6 +1,6 @@
 #!/bin/bash
 
-the_dev="./fs_raw"
+the_dev="./fs_raw.img"
 the_mount="./mnt"
 
 the_ko_name="spfs"
@@ -14,17 +14,26 @@ if [ ! -e "${the_dev}" ]; then
   ../mkfs.spfs "${the_dev}"
 fi
 
-echo "\nsudo insmod ${the_ko}"
+echo ""
+echo "sudo insmod ${the_ko}"
 sudo insmod "${the_ko}"
 
-echo "\nsudo mount -t ${the_dev} ${the_dev} ${the_mount} -o loop"
-sudo mount -t "${the_ko_name}" "${the_dev}" "${the_mount}" -o loop
+echo ""
+echo "sudo mount -t ${the_ko_name} -o loop ${the_dev} ${the_mount}"
+sudo mount -t "${the_ko_name}" -o loop "${the_dev}" "${the_mount}"
 
-echo "\nsudo ls ${the_mount}"
+sleep 10
+
+echo ""
+echo "sudo ls ${the_mount}"
 sudo ls "${the_mount}"
 
-echo "\nsudo umount ${the_mount}"
+sleep 10
+
+echo ""
+echo "sudo umount ${the_mount}"
 sudo umount ${the_mount}
 
-echo "\nsudo rmmod ${the_ko_name}"
+echo ""
+echo "sudo rmmod ${the_ko_name}"
 sudo rmmod "${the_ko_name}"
