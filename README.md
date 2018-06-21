@@ -15,6 +15,15 @@ https://sysplay.in/blog/category/linux-device-drivers/
 - https://www.kernel.org/doc/html/latest/filesystems/index.html?highlight=vfs#the-linux-vfs
   https://www.kernel.org/doc/htmldocs/filesystems/vfs.html
 
+# character device driver
+- https://pete.akeo.ie/2011/08/writing-linux-device-driver-for-kernels.html
+- http://derekmolloy.ie/writing-a-linux-kernel-module-part-1-introduction/
+  http://derekmolloy.ie/writing-a-linux-kernel-module-part-2-a-character-device/
+
+# device driver
+- http://derekmolloy.ie/kernel-gpio-programming-buttons-and-leds/
+
+
 #general
 - https://github.com/gurugio/book_linuxkernel_blockdrv
 

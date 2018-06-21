@@ -42,6 +42,8 @@
  * ##???
  * return PTR_ERR(ptr);
  * return ERR_PTR(PTR_ERR(inode));
+ * ##
+ * (dentry*) return ERR_CAST(bdev: bdev*);
  *
  * #
  * unsigned long i_ino;
@@ -87,7 +89,6 @@ static const struct super_operations spfs_super_ops;
  * TODO KM unload write back
  * TODO inode ref count
  * TODO inode correct locking
- * TODO new_inode lock until properly created
  * TODO internal lock inode when accessing inode.i_* variables?
  *
  * XXX optimize sb_bread without reading for block device when we are not
@@ -109,7 +110,8 @@ spfs_setup_inode_fp(struct inode *inode) {
     inode->i_op = &spfs_inode_ops;
     inode->i_fop = &spfs_dir_ops;
 
-    inc_nlink(inode); // TODO
+    /* directory inodes start off with i_nlink == 2 (for "." entry) */
+    inc_nlink(inode);
     break;
   default:
     BUG();
@@ -120,22 +122,25 @@ static struct spfs_inode *
 spfs_new_inode(struct super_block *sb, struct inode *parent, umode_t mode) {
   struct spfs_super_block *sbi;
   struct inode *inode;
+  spfs_id needle;
 
   sbi = sb->s_fs_info;
   BUG_ON(!sbi);
 
-  // XXX maybe use iget_locked() here as well and except the I_NEW flag always,
-  // to be sure we properly init inode before release of lock.
-  inode = new_inode(sb);
-  if (inode) {
+  {
+    mutex_lock(&sbi->id_lock);
+    needle = sbi->id++;
+    mutex_unlock(&sbi->id_lock);
+  }
+
+  inode = iget_locked(sb, needle);
+  if (!inode) {
+    return ERR_PTR(-ENOMEM);
+  }
+
+  if (inode->i_state & I_NEW) {
     struct spfs_inode *result;
     result = SPFS_INODE(inode);
-
-    {
-      mutex_lock(&sbi->id_lock);
-      inode->i_ino = sbi->id++;
-      mutex_unlock(&sbi->id_lock);
-    }
 
     if (parent) {
       /* #inode_init_owner()
@@ -144,13 +149,20 @@ spfs_new_inode(struct super_block *sb, struct inode *parent, umode_t mode) {
       inode_init_owner(inode, parent, mode);
     }
 
-    inode->i_atime = inode->i_mtime = inode->i_ctime = current_time(inode);
+    inode->i_ctime = current_time(inode);
+    inode->i_atime = inode->i_ctime;
+    inode->i_mtime = inode->i_ctime;
 
     result->start = 0;
 
     spfs_setup_inode_fp(inode);
 
+    unlock_new_inode(inode);
+
     return result;
+  } else {
+    // XXX should never happen
+    iget_failed(inode);
   }
 
   return ERR_PTR(-ENOMEM);
@@ -273,6 +285,12 @@ struct spfs_dir_block {
   unsigned long children;
 };
 
+struct spfs_dir_entry {
+  // TODO
+  unsigned long ino;
+  /* char name[] */
+};
+
 static int
 spfs_parse_dir_block(struct buffer_head *bh, size_t *pos,
                      struct spfs_dir_block *out) {
@@ -383,7 +401,7 @@ spfs_add_child(struct super_block *sb, struct spfs_inode *parent,
 
   mutex_lock(&parent->lock);
   start = parent->start;
-  // TODO this wont work when the first is full and the next is created...
+// TODO this wont work when the first is full and the next is created...
 
 Lit:
   if (start) {
@@ -469,11 +487,6 @@ spfs_create(struct inode *parent, struct dentry *subject, umode_t mode,
     struct inode *inode = d_inode(subject);
     BUG_ON(!inode);
 
-    /* #inc_nlink()
-     * increment an inode's link count
-     */
-    inc_nlink(parent);
-
     res = spfs_add_child(sb, SPFS_INODE(parent), inode);
   }
   //}
@@ -500,6 +513,11 @@ spfs_mkdir(struct inode *parent, struct dentry *subject, umode_t mode) {
     struct inode *inode = d_inode(subject);
     BUG_ON(!inode);
 
+    /* #inc_nlink()
+     * increment an inode's link count
+     *
+     * XXX only used for mkdir in ramfs. why not for create?
+     */
     inc_nlink(parent);
 
     res = spfs_add_child(sb, SPFS_INODE(parent), inode);
@@ -1242,15 +1260,28 @@ Lrelease:
 }
 
 static int
+spfs_set_blocksize(struct super_block *sb) {
+  bool is_bdev = sb->s_bdev != NULL;
+
+  if (is_bdev) {
+    if (sb_set_blocksize(sb, SPOOKY_FS_INITIAL_BLOCK_SIZE) == 0) {
+      return -EINVAL;
+    }
+  } else {
+    // TODO
+  }
+
+  return 0;
+}
+
+static int
 spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
+  int res;
   struct spfs_inode *root;
   struct spfs_super_block *sbi;
-  int res;
-
   const sector_t super_start = 0;
 
   BUG_ON(!sb);
-  BUG_ON(!sb->s_bdev); // TODO is NULL
 
   printk(KERN_INFO "spfs_kill_super_block()\n");
 
@@ -1266,11 +1297,9 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
   /*  */
   sb->s_op = &spfs_super_ops;
 
-  if (sb->s_bdev) {
-    if (sb_set_blocksize(sb, SPOOKY_FS_INITIAL_BLOCK_SIZE) == 0) {
-      res = -EINVAL;
-      goto Lerr;
-    }
+  res = spfs_set_blocksize(sb, SPOOKY_FS_INITIAL_BLOCK_SIZE);
+  if (res) {
+    goto Lerr;
   }
 
   res = spfs_super_block_init(sb, sbi, super_start);
@@ -1278,11 +1307,9 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
     goto Lerr;
   }
 
-  if (sb->s_bdev) {
-    if (sb_set_blocksize(sb, sbi->block_size) == 0) {
-      res = -EINVAL;
-      goto Lerr;
-    }
+  res = spfs_set_blocksize(sb, sbi->block_size);
+  if (res) {
+    goto Lerr;
   }
 
   res = spfs_btree_init(sb, &sbi->tree, sbi->btree_offset);
@@ -1297,7 +1324,8 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
 
   root = spfs_inode_by_id(sb, sbi->root_id);
   if (IS_ERR(root)) {
-    root = spfs_new_inode(sb, NULL, S_IFDIR);
+    mode_t mode = S_IFDIR | S_IRWXU | S_IRWXG | S_IRWXO;
+    root = spfs_new_inode(sb, NULL, mode);
     if (IS_ERR(root)) {
       res = -ENOMEM;
       goto Lerr;
@@ -1305,6 +1333,8 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
     sbi->root_id = root->i_inode.i_ino;
   }
 
+  i_gid_write(&root->i_inode, current_fsuid());
+  i_uid_write(&root->i_inode, current_fsgid());
   // doc
   sb->s_root = d_make_root(&root->i_inode);
 
