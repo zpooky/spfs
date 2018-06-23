@@ -2,6 +2,7 @@
 #include "util.h"
 
 #include <linux/buffer_head.h>
+#include <linux/cred.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 
@@ -122,7 +123,7 @@ static struct spfs_inode *
 spfs_new_inode(struct super_block *sb, struct inode *parent, umode_t mode) {
   struct spfs_super_block *sbi;
   struct inode *inode;
-  spfs_id needle;
+  spfs_ino needle;
 
   sbi = sb->s_fs_info;
   BUG_ON(!sbi);
@@ -401,7 +402,7 @@ spfs_add_child(struct super_block *sb, struct spfs_inode *parent,
 
   mutex_lock(&parent->lock);
   start = parent->start;
-// TODO this wont work when the first is full and the next is created...
+  // TODO this wont work when the first is full and the next is created...
 
 Lit:
   if (start) {
@@ -1260,11 +1261,11 @@ Lrelease:
 }
 
 static int
-spfs_set_blocksize(struct super_block *sb) {
+spfs_set_blocksize(struct super_block *sb, size_t block_size) {
   bool is_bdev = sb->s_bdev != NULL;
 
   if (is_bdev) {
-    if (sb_set_blocksize(sb, SPOOKY_FS_INITIAL_BLOCK_SIZE) == 0) {
+    if (sb_set_blocksize(sb, block_size) == 0) {
       return -EINVAL;
     }
   } else {
@@ -1333,8 +1334,10 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
     sbi->root_id = root->i_inode.i_ino;
   }
 
-  i_gid_write(&root->i_inode, current_fsuid());
-  i_uid_write(&root->i_inode, current_fsgid());
+  root->i_inode.i_uid = current_fsuid();
+  root->i_inode.i_gid = current_fsgid();
+  /* i_gid_write(&root->i_inode, g); */
+  /* i_uid_write(&root->i_inode, u); */
   // doc
   sb->s_root = d_make_root(&root->i_inode);
 
