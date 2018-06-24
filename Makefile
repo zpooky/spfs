@@ -11,7 +11,8 @@ CXXFLAG := -std=gnu89 -Wall -Werror -Wextra
 all: $(MKFS) ko
 
 ko:
-	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
+	# make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
+	make -C $(HOME)/sources/linux M=$(PWD) modules
 
 %.o: %.c
 	$(CC) $(CXXFLAG) -c $< -o $@
@@ -21,5 +22,6 @@ $(MKFS): $(OBJECTS)
 
 clean:
 	rm $(MKFS)
-	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
+	# make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
+	make -C $(HOME)/sources/linux M=$(PWD) clean
 

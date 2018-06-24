@@ -1336,8 +1336,7 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
 
   root->i_inode.i_uid = current_fsuid();
   root->i_inode.i_gid = current_fsgid();
-  /* i_gid_write(&root->i_inode, g); */
-  /* i_uid_write(&root->i_inode, u); */
+
   // doc
   sb->s_root = d_make_root(&root->i_inode);
 

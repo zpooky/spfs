@@ -1,5 +1,4 @@
 # spfs
-
 https://www.tldp.org/LDP/lkmpg/2.6/html/x569.html
 https://github.com/cirosantilli/linux-kernel-module-cheat#setup-types
 https://sysplay.in/blog/category/linux-device-drivers/
@@ -53,7 +52,7 @@ qemu -append nokaslr
 ## gdb
 ```gdb
 # to read debug symbols
-gdb ./vmlinux # or in a running gdb instance
+gdb ./vmlinux
 file vmlinux
 
 info address init_uts_ns
