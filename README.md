@@ -25,6 +25,7 @@ https://sysplay.in/blog/category/linux-device-drivers/
 
 #general
 - https://github.com/gurugio/book_linuxkernel_blockdrv
+- https://stackoverflow.com/questions/12589605/debug-info-for-loadable-kernel-modules "Debug-info for loadable kernel modules"
 
 #
 Fiestel network inode gen?

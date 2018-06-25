@@ -421,6 +421,10 @@ spfs_inode_parse(struct buffer_head *bh, struct spfs_inode *out) {
     out_inode->i_ctime.tv_nsec = 0;
   }
 
+  if (!spfs_sb_read_u32(bh, &pos, &out->capacity)) {
+    return -EIO;
+  }
+
   if (!spfs_sb_read_u32(bh, &pos, &out->start)) {
     return -EIO;
   }
@@ -481,6 +485,10 @@ spfs_inode_make(struct buffer_head *bh, const struct spfs_inode *in) {
     if (!spfs_sb_write_u64(bh, &pos, ctime)) {
       return -EIO;
     }
+  }
+
+  if (!spfs_sb_write_u32(bh, &pos, in->capacity)) {
+    return -EIO;
   }
 
   if (!spfs_sb_write_u32(bh, &pos, in->start)) {

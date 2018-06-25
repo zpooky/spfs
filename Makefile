@@ -6,13 +6,20 @@ MKFS := mkfs.spfs
 OBJECTS := mkfs.spfs.o
 CXXFLAG := -std=gnu89 -Wall -Werror -Wextra
 
+CFLAG_DEBUG := -g -DDEBUG
+
 # CFLAGS_sp.o := -DDEBUG
 
-all: $(MKFS) ko
+all: $(MKFS) ko_debug
 
 ko:
 	# make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
 	make -C $(HOME)/sources/linux M=$(PWD) modules
+
+ko_debug:
+	# make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
+	make -C $(HOME)/sources/linux M=$(PWD) modules
+	EXTRA_CFLAGS="$(CFLAG_DEBUG)"
 
 %.o: %.c
 	$(CC) $(CXXFLAG) -c $< -o $@

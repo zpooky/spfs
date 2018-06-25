@@ -13,6 +13,8 @@ struct spfs_inode {
   struct mutex lock;
   /* } */
 
+  /* Capacity in number of blocks */
+  size_t capacity;
   sector_t start;
   char name[SPOOKY_FS_NAME_MAX];
 };
