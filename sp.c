@@ -75,15 +75,6 @@ static const struct file_operations spfs_dir_ops;
 static const struct super_operations spfs_super_ops;
 
 /* TODO map page region of file block?
- *
- * .tmp_sp.o: warning: objtool: spfs_read()+0x26: sibling call from callable
- *            instruction with modified stack frame
- * .tmp_sp.o: warning: objtool: spfs_write()+0x26: sibling call from callable
- *            instruction with modified stack frame
- * .tmp_sp.o: warning: objtool: spfs_fill_super_block()+0x2a: sibling call from
- *            callable instruction with modified stack frame
- * .tmp_sp.o: warning: objtool: spfs_fill_super_block.cold.17()+0x52: return
- *            with modified stack frame
  */
 
 /* TODO support File blocks > block_size (currently bugged)
@@ -402,7 +393,7 @@ spfs_add_child(struct super_block *sb, struct spfs_inode *parent,
 
   mutex_lock(&parent->lock);
   start = parent->start;
-  // TODO this wont work when the first is full and the next is created...
+// TODO this wont work when the first is full and the next is created...
 
 Lit:
   if (start) {
@@ -737,8 +728,8 @@ static const struct inode_operations spfs_inode_ops = {
 //=====================================
 #define MIN(f, s) (f) > (s) ? (s) : (f)
 
-struct spfs_file_block {
-  /* block id of next spfs_file_block */
+struct spfs_file_extent {
+  /* block id of next spfs_file_extent */
   sector_t next;
   /* capacity in number of blocks */
   unsigned long capacity;
@@ -747,8 +738,8 @@ struct spfs_file_block {
 };
 
 static int
-spfs_parse_file_block(struct buffer_head *bh, size_t *pos,
-                      struct spfs_file_block *out) {
+spfs_parse_file_header(struct buffer_head *bh, size_t *pos,
+                       struct spfs_file_extent *out) {
   unsigned long magic;
 
   /* [magic:u32, next:sector_t, cap:u32, length:u32, raw:cap] */
@@ -773,8 +764,8 @@ spfs_parse_file_block(struct buffer_head *bh, size_t *pos,
 }
 
 static int
-spfs_make_file_block(struct buffer_head *bh, size_t *pos,
-                     const struct spfs_file_block *in) {
+spfs_make_file_header(struct buffer_head *bh, size_t *pos,
+                      const struct spfs_file_extent *in) {
   if (!spfs_sb_write_u32(bh, pos, SPOOKY_FS_FILE_BLOCK_MAGIC)) {
     return 1;
   }
@@ -792,6 +783,78 @@ spfs_make_file_block(struct buffer_head *bh, size_t *pos,
   return 0;
 }
 
+static ssize_t
+spfs_read_extent(struct super_block *sb, struct sector_t * /*OUT*/ next,
+                 sector_t start, char __user **in_buf, size_t *in_len,
+                 loff_t *pos) {
+  struct spfs_file_extent header = {};
+
+  struct buffer_head *bh;
+  struct spfs_super_block *sbi;
+  size_t bh_pos = 0;
+  size_t read = 0;
+
+  sbi = sb->s_fs_info;
+
+  bh = sb_bread(sb, start);
+  if (!bh) {
+    // cleanup
+    return -EIO;
+  }
+
+  res = spfs_parse_file_header(bh, &bh_pos, &header);
+  if (res) {
+    // cleanup
+    return res;
+  }
+  *next = header.next;
+  // XXX calc start sector_t based on $block.length, $in_len and $bh.length
+
+  do {
+    unsigned int con;
+
+    con = MIN(*pos, MIN(spfs_sb_remaining(bh, bh_pos), block.length));
+    bh_pos += con;
+    *pos -= con;
+    block.length -= con;
+
+    if (*pos == 0) {
+
+      con = MIN(*in_len, MIN(spfs_sb_remaining(bh, bh_pos), block.length));
+      if (con > 0) {
+        copy_to_user(/*dest*/ *in_buf, /*src*/ bh->b_data + bh_pos, con);
+        bh_pos += con;
+        *in_buf += con;
+        *in_len -= con;
+
+        read += con;
+        block.length -= con;
+      }
+    }
+
+    brelse(bh);
+
+    /* block.length -= MIN(block.length, sbi->block_size); */
+    if (block.length > 0) {
+      BUG_ON(block.length == 0);
+      block.capacity--;
+      start = start + 1;
+
+      bh = sb_bread(sb, start);
+      if (!bh) {
+        // cleanup
+        return -EIO;
+      }
+
+      bh_pos = 0;
+    } else {
+      break;
+    }
+  } while (1);
+
+  return read;
+}
+
 /*
  * Used to retrieve data from the device.
  * A non-negative return value represents the number of bytes successfully
@@ -800,7 +863,7 @@ spfs_make_file_block(struct buffer_head *bh, size_t *pos,
 static ssize_t
 spfs_read(struct file *file, char __user *in_buf, size_t in_len, loff_t *ppos) {
 
-  int res;
+  ssize_t res;
   struct spfs_inode *inode;
   struct super_block *sb;
   struct spfs_super_block *sbi;
@@ -812,6 +875,7 @@ spfs_read(struct file *file, char __user *in_buf, size_t in_len, loff_t *ppos) {
     return -EINVAL;
   }
 
+  // XXX handle when *ppos > file.length by check inode.size
   pos = *ppos;
   read = 0;
 
@@ -837,48 +901,20 @@ spfs_read(struct file *file, char __user *in_buf, size_t in_len, loff_t *ppos) {
 
   {
     sector_t start;
-    mutex_lock(&inode->lock);
+    mutex_lock(&inode->lock); // XXX read lock
     start = inode->start;
   Lit:
     if (start) {
-      unsigned int con;
-      struct spfs_file_block file_block;
-      struct buffer_head *bh;
-      size_t bh_pos = 0;
+      sector_t next = 0;
 
-      bh = sb_bread(sb, start);
-      if (!bh) {
-        // cleanup
-        return -EIO;
-      }
-
-      res = spfs_parse_file_block(bh, &bh_pos, &file_block);
-      if (res) {
-        // cleanup
+      res = spfs_read_extent(sb, &next, start, &in_buf, &in_len, &pos);
+      if (res < 0) {
         return res;
       }
-
-      con = MIN(pos, spfs_sb_remaining(bh, bh_pos));
-      bh_pos += con;
-      pos -= con;
-
-      if (pos == 0) {
-
-        con = MIN(in_len, spfs_sb_remaining(bh, bh_pos));
-        if (con > 0) {
-          copy_to_user(/*dest*/ in_buf, /*src*/ bh->b_data + bh_pos, con);
-          bh_pos += con;
-          in_buf += con;
-          in_len -= con;
-
-          read += con;
-        }
-      }
-
-      brelse(bh);
+      read += res;
 
       if (in_len > 0) {
-        start = file_block.next;
+        start = next;
         goto Lit;
       }
     }
@@ -933,7 +969,7 @@ spfs_file_block_alloc(struct super_block *sb, size_t len) {
 
   if (result) {
     int res;
-    struct spfs_file_block desc = {
+    struct spfs_file_extent desc = {
         /**/
         .next = 0,
         .capacity = blocks,
@@ -946,7 +982,7 @@ spfs_file_block_alloc(struct super_block *sb, size_t len) {
     bh = sb_bread(sb, result);
     BUG_ON(!bh);
 
-    res = spfs_make_file_block(bh, &b_pos, &desc);
+    res = spfs_make_file_header(bh, &b_pos, &desc);
     if (res) {
       // cleanup
       return 0;
@@ -959,32 +995,82 @@ spfs_file_block_alloc(struct super_block *sb, size_t len) {
   return result;
 }
 
+static ssize_t
+spfs_write_extent(const char __user **in_buf, size_t *in_len, loff_t *ppos) {
+  struct spfs_file_extent header;
+  bool block_dirty = false;
+
+  struct buffer_head *bh;
+  size_t bh_pos = 0;
+  unsigned int con;
+
+  bh = sb_bread(sb, start);
+  if (!bh) {
+    // cleanup
+    return -EIO;
+  }
+
+  res = spfs_parse_file_header(bh, &bh_pos, &header);
+  if (res) {
+    // cleanup
+    return res;
+  }
+
+  con = MIN(pos, spfs_sb_remaining(bh, bh_pos));
+  pos -= con;
+  bh_pos += con;
+  if (pos == 0) {
+    /* We have counted down to the desired position by traversing the file
+     * blocks. Meaning we can now start to write from $in_buf to $bh
+     */
+
+    con = MIN(in_len, spfs_sb_remaining(bh, bh_pos));
+    if (con > 0) {
+      size_t ipos;
+
+      copy_from_user(/*dest*/ bh->b_data + bh_pos, /*src*/ in_buf, con);
+      in_buf += con;
+      in_len -= con;
+      bh_pos += con;
+      header.length += con;
+      written += con;
+
+      /* Write back $header.length */
+      ipos = 0;
+      res = spfs_make_file_header(bh, &ipos, &header);
+      if (res) {
+        // cleanup
+        return res;
+      }
+
+      block_dirty = true;
+    }
+  }
+}
+
 /*
  * Sends data to the device. If missing, -EINVAL is returned to the program
  * calling the write system call. The return value, if non-negative,
  * represents the number of bytes successfully written.
  *
  * On a regular file, if this incremented file offset is greater than the
- * length of the file, the length of the file shall be set to this file offset.
+ * length of the file, the length of the file shall be set to this file
+ * offset.
  */
 static ssize_t
 spfs_write(struct file *file, const char __user *in_buf, size_t in_len,
            loff_t *ppos) {
-  int res;
   struct spfs_inode *inode;
   struct super_block *sb;
   struct spfs_super_block *sbi;
 
   ssize_t written = 0;
-  loff_t pos;
 
   if (!ppos) {
     return -EINVAL;
   }
 
-  /* XXX EFBIG            */
-
-  pos = *ppos;
+  /* XXX EFBIG - file to big*/
 
   printk(KERN_INFO "spfs_write()\n");
 
@@ -1007,80 +1093,53 @@ spfs_write(struct file *file, const char __user *in_buf, size_t in_len,
   BUG_ON(!sbi);
 
   {
+    loff_t orig_file_sz;
+    loff_t pos;
     sector_t start;
 
-    // XXX interruptible
-    mutex_lock(&inode->lock);
+    if (mutex_lock_interruptible(&inode->lock)) {
+      return -EINTR;
+    }
+
+    orig_file_sz = i_size_read(&inode->i_inode);
+    if (*ppos > orig_file_sz) {
+      *ppos = orig_file_sz;
+    }
+
+    pos = *ppos;
     start = inode->start;
   Lit:
     if (start) {
-      struct spfs_file_block block;
-      bool block_dirty = false;
-
-      struct buffer_head *bh;
-      size_t bh_pos = 0;
-      unsigned int con;
-
-      bh = sb_bread(sb, start);
-      if (!bh) {
-        // cleanup
-        return -EIO;
-      }
-
-      res = spfs_parse_file_block(bh, &bh_pos, &block);
-      if (res) {
-        // cleanup
-        return res;
-      }
-
-      con = MIN(pos, spfs_sb_remaining(bh, bh_pos));
-      pos -= con;
-      bh_pos += con;
-      if (pos == 0) {
-        /* We have counted down to the desired position by traversing the file
-         * blocks. Meaning we can now start to write from $in_buf to $bh
-         */
-
-        con = MIN(in_len, spfs_sb_remaining(bh, bh_pos));
-        if (con > 0) {
-          size_t ipos;
-
-          copy_from_user(/*dest*/ bh->b_data + bh_pos, /*src*/ in_buf, con);
-          in_buf += con;
-          in_len -= con;
-          bh_pos += con;
-          block.length += con;
-          written += con;
-
-          /* Write back $block.length */
-          ipos = 0;
-          res = spfs_make_file_block(bh, &ipos, &block);
-          if (res) {
-            // cleanup
-            return res;
-          }
-
-          block_dirty = true;
+      // TODO calc based on *$ppos and file size if we need to allocate from
+      // free_list ahead of time so we do not overwrite any data before we are
+      // sure that we can fit everything.
+      {
+        ssize_t res;
+        res = spfs_write_extent(&in_buf, &in_len, &pos);
+        if (res < 0) {
+          return res;
         }
+        written += res;
       }
 
       if (in_len > 0) {
-        /* We have handled current file block, onto the next.
+        /* We have handled current file extent, onto the next.
          */
-        if (block.next == 0) {
+        if (header.next == 0) {
+          int res;
           size_t ipos;
           pos = 0;
 
-          /* Allocate $block.next to make space for $in_buf */
-          block.next = spfs_file_block_alloc(sb, in_len);
-          if (!block.next) {
+          /* Allocate $header.next to make space for $in_buf */
+          header.next = spfs_file_block_alloc(sb, in_len);
+          if (!header.next) {
             // cleanup
             return -EINVAL;
           }
 
-          /* Write back $block.next */
+          /* Write back $header.next */
           ipos = 0;
-          res = spfs_make_file_block(bh, &ipos, &block);
+          res = spfs_make_file_header(bh, &ipos, &header);
           if (res) {
             // cleanup
             return res;
@@ -1095,7 +1154,7 @@ spfs_write(struct file *file, const char __user *in_buf, size_t in_len,
       }
       brelse(bh);
 
-      start = block.next;
+      start = header.next;
       goto Lit;
     } else {
       /* We only get here we the initial $spfs_inode.start pointer is 0
@@ -1120,11 +1179,10 @@ spfs_write(struct file *file, const char __user *in_buf, size_t in_len,
       goto Lit;
     }
 
-    BUG_ON(in_len != 0);
+    /* BUG_ON(in_len != 0); */
 
     if (written > 0) {
-      loff_t sz = i_size_read(&inode->i_inode);
-      i_size_write(&inode->i_inode, sz + written);
+      i_size_write(&inode->i_inode, orig_file_sz + written);
     }
     mutex_unlock(&inode->lock);
     *ppos += written;
@@ -1487,7 +1545,8 @@ spfs_write_inode(struct inode *inode, struct writeback_control *wbc) {
 //=====================================
 static struct file_system_type spfs_fs_type = {
     .name = "spfs",
-    .fs_flags = FS_REQUIRES_DEV,
+    /* .fs_flags = FS_REQUIRES_DEV, */
+    .fs_flags = 0,
     /* Mount an instance of the filesystem */
     .mount = spfs_mount,
     /* Shutdown an instance of the filesystem... */

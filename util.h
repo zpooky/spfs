@@ -3,7 +3,7 @@
 
 #include <linux/buffer_head.h>
 
-extern unsigned int
+extern size_t
 spfs_sb_remaining(struct buffer_head *bh, size_t pos);
 
 extern bool

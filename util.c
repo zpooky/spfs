@@ -1,7 +1,7 @@
 #include "util.h"
 
 /* ===================================== */
-unsigned int
+size_t
 spfs_sb_remaining(struct buffer_head *bh, size_t pos) {
   BUG_ON(pos > bh->b_size);
   return bh->b_size - pos;
@@ -67,7 +67,7 @@ spfs_sb_write_u32(struct buffer_head *bh, size_t *pos, unsigned long val) {
 }
 
 /* ===================================== */
-extern bool
+bool
 spfs_sb_read_u64(struct buffer_head *bh, size_t *pos, u64 *out) {
   if (spfs_sb_remaining(bh, *pos) < sizeof(*out)) {
     return false;
@@ -81,7 +81,7 @@ spfs_sb_read_u64(struct buffer_head *bh, size_t *pos, u64 *out) {
   return true;
 }
 
-extern bool
+bool
 spfs_sb_write_u64(struct buffer_head *bh, size_t *pos, u64 val) {
   if (spfs_sb_remaining(bh, *pos) < sizeof(val)) {
     return false;
