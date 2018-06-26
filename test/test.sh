@@ -6,6 +6,9 @@ the_mount="./mnt"
 the_ko_name="spfs"
 the_ko="../${the_ko_name}.ko"
 
+su_do=""
+su_do="sudo"
+
 if [ ! -e "${the_dev}" ]; then
   echo "dd if=/dev/zero of=${the_dev} count=5 bs=1M"
   dd if=/dev/zero of="${the_dev}" count=5 bs=1M
@@ -15,25 +18,25 @@ if [ ! -e "${the_dev}" ]; then
 fi
 
 echo ""
-echo "sudo insmod ${the_ko}"
-sudo insmod "${the_ko}"
+echo "${su_do} insmod ${the_ko}"
+${su_do} insmod "${the_ko}"
 
 echo ""
-echo "sudo mount -t ${the_ko_name} -o loop ${the_dev} ${the_mount}"
-sudo mount -t "${the_ko_name}" -o loop "${the_dev}" "${the_mount}"
+echo "${su_do} mount -t ${the_ko_name} -o loop ${the_dev} ${the_mount}"
+${su_do} mount -t "${the_ko_name}" -o loop "${the_dev}" "${the_mount}"
 
 sleep 10
 
 echo ""
-echo "sudo ls ${the_mount}"
-sudo ls "${the_mount}"
+echo "${su_do} ls ${the_mount}"
+${su_do} ls "${the_mount}"
 
 sleep 10
 
 echo ""
-echo "sudo umount ${the_mount}"
-sudo umount ${the_mount}
+echo "${su_do} umount ${the_mount}"
+${su_do} umount ${the_mount}
 
 echo ""
-echo "sudo rmmod ${the_ko_name}"
-sudo rmmod "${the_ko_name}"
+echo "${su_do} rmmod ${the_ko_name}"
+${su_do} rmmod "${the_ko_name}"

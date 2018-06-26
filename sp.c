@@ -392,7 +392,7 @@ spfs_add_child(struct super_block *sb, struct spfs_inode *parent,
 
   mutex_lock(&parent->lock);
   start = parent->start;
-// TODO this wont work when the first is full and the next is created...
+  // TODO this wont work when the first is full and the next is created...
 
 Lit:
   if (start) {
@@ -783,7 +783,7 @@ spfs_make_file_extent(struct buffer_head *bh, size_t *pos,
 }
 
 static size_t
-spfs_sizeof_file_extent_header() {
+spfs_sizeof_file_extent_header(void) {
   size_t result = 0;
 
   result += 4;
@@ -1004,8 +1004,9 @@ spfs_file_extent_alloc(struct super_block *sb, size_t blocks) {
   return result;
 }
 
-static spfs_do_write(struct buffer_head *bh, size_t *bh_pos,
-                     const char __user **in_buf, size_t *in_len, loff_t *ppos) {
+static ssize_t
+spfs_do_write(struct buffer_head *bh, size_t *bh_pos,
+              const char __user **in_buf, size_t *in_len, loff_t *ppos) {
   ssize_t written = 0;
   size_t con;
 
@@ -1032,7 +1033,7 @@ static spfs_do_write(struct buffer_head *bh, size_t *bh_pos,
 }
 
 static bool
-spfs_in_sector(const spfs_super_block *sbi, loff_t pos) {
+spfs_in_sector(const struct spfs_super_block *sbi, loff_t pos) {
   return pos < sbi->block_size;
 }
 
@@ -1042,10 +1043,13 @@ spfs_write_file_extent(struct super_block *sb, sector_t start,
                        const char __user **in_buf, size_t *in_len, loff_t *ppos,
                        sector_t *extra) {
   ssize_t res;
+  struct spfs_super_block *sbi;
   ssize_t written = 0;
   size_t head_pos = 0;
   struct buffer_head *head_bh;
   bool head_dirty = false;
+
+  sbi = sb->s_fs_info;
   /* Setup buffer for file extent header */
   {
     head_bh = sb_bread(sb, start);
@@ -1075,9 +1079,9 @@ spfs_write_file_extent(struct super_block *sb, sector_t start,
       // cleanup & propagate written bytes
       return res;
     }
+    written += res;
+    header->length += res;
     if (res > 0) {
-      written += res;
-      header.length += res;
       head_dirty = true;
     }
   }
@@ -1102,8 +1106,8 @@ spfs_write_file_extent(struct super_block *sb, sector_t start,
           // cleanup & propagate written bytes
           return res;
         }
+        header->length += res;
         if (res > 0) {
-          header.length += res;
           head_dirty = true;
           mark_buffer_dirty(bh);
         }
@@ -1145,13 +1149,22 @@ spfs_blocks_for(const struct spfs_super_block *sbi, size_t bytes) {
 }
 
 static size_t
-spfs_calc_extra_blocks(const struct spfs_super_block *sbi, size_t capacity,
-                       size_t in_pos, size_t in_len) {
-  size_t extra_bytes;
-  const size_t block_size = sbi->block_size;
-  const size_t end = in_pos + in_len;
+spfs_calc_extra_blocks(struct spfs_inode *inode, size_t capacity, size_t in_pos,
+                       size_t in_len) {
+  struct super_block *sb;
+  struct spfs_super_block *sbi;
 
-  if (end <= sbi->capacity) {
+  size_t extra_bytes;
+  size_t block_size;
+  size_t end;
+
+  sb = inode->i_inode.i_sb;
+  sbi = sb->s_fs_info;
+
+  block_size = sbi->block_size;
+  end = in_pos + in_len;
+
+  if (end <= inode->capacity) {
     return 0;
   }
 
@@ -1185,7 +1198,7 @@ spfs_ensure_capacity(struct spfs_inode *inode, size_t in_pos, size_t in_len,
 
   *extra = 0;
 
-  extra_blocks = spfs_calc_extra_blocks(sbi, inode->capacity, in_pos, in_len);
+  extra_blocks = spfs_calc_extra_blocks(inode, inode->capacity, in_pos, in_len);
   if (extra_blocks == 0) {
     return 0;
   }
@@ -1204,18 +1217,20 @@ spfs_ensure_capacity(struct spfs_inode *inode, size_t in_pos, size_t in_len,
   }
 
   inode->capacity += spfs_file_extent_data_bytes(sbi, extra_blocks);
-  struct spfs_modify_start ctx = {
-      /**/
-      .start = inode->start,
-      .capacity = inode->capacity
-      /**/
-  };
+  {
+    struct spfs_modify_start ctx = {
+        /**/
+        .start = inode->start,
+        .capacity = inode->capacity
+        /**/
+    };
 
-  // XXX maybe have async start&capacity update only setting inode and
-  // persisting it only on inode unload
-  mutex_lock(&sbi->tree.lock); // XXX read lock
-  res = spfs_btree_modify(&sbi->tree, ino, &ctx, spfs_modify_start_cb);
-  mutex_unlock(&sbi->tree.lock);
+    // XXX maybe have async start&capacity update only setting inode and
+    // persisting it only on inode unload
+    mutex_lock(&sbi->tree.lock); // XXX read lock
+    res = spfs_btree_modify(&sbi->tree, ino, &ctx, spfs_modify_start_cb);
+    mutex_unlock(&sbi->tree.lock);
+  }
   if (res) {
     // cleanup
     return res;
