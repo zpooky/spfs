@@ -1022,10 +1022,11 @@ Lret:
 
 int
 spfs_btree_insert(struct spfs_btree *self, struct spfs_inode *in) {
-  struct spfs_bnode tree = {};
-  struct spfs_bnode *tree_ptr;
   int res;
-  struct buffer_head *bh;
+  struct spfs_bnode tree = {};
+  struct spfs_bnode *tree_ptr = NULL;
+
+  struct buffer_head *bh = NULL;
   struct btree_bubble bubble;
   struct super_block *sb;
   spfs_inode_sector out;
@@ -1034,8 +1035,6 @@ spfs_btree_insert(struct spfs_btree *self, struct spfs_inode *in) {
   /* Result as the location of the inserted entry. */
   out = 0;
 
-  bh = NULL;
-  tree_ptr = NULL;
   memset(&bubble, 0, sizeof(bubble));
 
   if (self->start) {
