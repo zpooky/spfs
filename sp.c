@@ -72,10 +72,8 @@ static const struct file_operations spfs_file_ops;
 static const struct file_operations spfs_dir_ops;
 static const struct super_operations spfs_super_ops;
 
-/* TODO map page region of file block?
- */
-
 /* TODO LKM unload write back
+ * TODO super block field to indicate if we have the fs open
  * TODO inode ref count
  * TODO inode correct locking
  * TODO internal lock inode when accessing inode.i_* variables?
@@ -108,7 +106,8 @@ spfs_setup_inode_fp(struct inode *inode) {
 }
 
 static struct spfs_inode *
-spfs_new_inode(struct super_block *sb, struct inode *parent, umode_t mode) {
+spfs_new_inode(struct super_block *sb, struct spfs_inode *parent,
+               umode_t mode) {
   struct spfs_super_block *sbi;
   struct inode *inode;
   spfs_ino needle;
@@ -117,7 +116,7 @@ spfs_new_inode(struct super_block *sb, struct inode *parent, umode_t mode) {
   BUG_ON(!sbi);
 
   {
-    mutex_lock(&sbi->id_lock);
+    mutex_lock(&sbi->id_lock); // XXX spinlock
     needle = sbi->id++;
     mutex_unlock(&sbi->id_lock);
   }
@@ -135,7 +134,7 @@ spfs_new_inode(struct super_block *sb, struct inode *parent, umode_t mode) {
       /* #inode_init_owner()
        * Init uid,gid,mode for new inode according to posix standards
        */
-      inode_init_owner(inode, parent, mode);
+      inode_init_owner(inode, &parent->i_inode, mode);
     }
 
     inode->i_ctime = current_time(inode);
@@ -163,7 +162,7 @@ spfs_inode_by_id(struct super_block *sb, spfs_ino needle) {
 
   /* #iget_locked()
    * - Search for existing inode in cache, and if found return it with
-   *   increased ref count.
+   *   increased ref count.(hash map?)
    * - if not in cache allocate new inode and set state to I_NEW, caller is
    *   responsible to populate it.
    */
@@ -189,8 +188,6 @@ spfs_inode_by_id(struct super_block *sb, spfs_ino needle) {
 
   if (res) {
     /* Not found */
-    // cleanup
-
     /* #iget_failed()
      * Mark an under-construction inode as dead and release it
      */
@@ -212,11 +209,13 @@ spfs_inode_by_id(struct super_block *sb, spfs_ino needle) {
 }
 
 static int
-spfs_generic_create(struct inode *parent, struct dentry *dentry, umode_t mode) {
+spfs_generic_create(struct spfs_inode *parent, struct dentry *dentry,
+                    umode_t mode) {
   int res;
   struct super_block *sb;
   struct spfs_super_block *sbi;
   struct spfs_inode *inode;
+  struct qstr *name = &dentry->d_name;
 
   BUG_ON(!parent);
   BUG_ON(!dentry);
@@ -227,14 +226,13 @@ spfs_generic_create(struct inode *parent, struct dentry *dentry, umode_t mode) {
   sbi = sb->s_fs_info;
   BUG_ON(!sbi);
 
+  if (name->len > sizeof(inode->name)) {
+    return -ENAMETOOLONG;
+  }
+
   res = -ENOENT;
   inode = spfs_new_inode(sb, parent, mode);
   if (inode) {
-    struct qstr *name = &dentry->d_name;
-    if (name->len > sizeof(inode->name)) {
-      // cleanup
-      return -ENAMETOOLONG;
-    }
     memset(inode->name, 0, sizeof(inode->name));
     memcpy(inode->name, name->name, name->len);
 
@@ -252,7 +250,7 @@ spfs_generic_create(struct inode *parent, struct dentry *dentry, umode_t mode) {
 
     /* #d_instantiate()
      * Fill in inode information for a dentry
-     * XXX
+     * XXX?
      * This assumes that the inode count has been incremented (or otherwise set)
      * by the caller to indicate that it is now in use by the dcache.
      */
@@ -391,8 +389,13 @@ spfs_add_child(struct super_block *sb, struct spfs_inode *parent,
   sector_t start;
 
   mutex_lock(&parent->lock);
+  {
+    parent->capacity++;
+    mark_inode_dirty(&parent->i_inode);
+  }
+
   start = parent->start;
-  // TODO this wont work when the first is full and the next is created...
+// TODO this wont work when the first is full and the next is created...
 
 Lit:
   if (start) {
@@ -464,21 +467,23 @@ spfs_create(struct inode *parent, struct dentry *subject, umode_t mode,
             bool excl) {
   int res;
   struct super_block *sb;
+  struct spfs_inode *spfs_parent;
 
   BUG_ON(!S_ISREG(mode));
 
+  spfs_parent = SPFS_INODE(parent);
   sb = parent->i_sb;
 
   BUG_ON(!sb);
 
   // newly created inode-lock {
   // XXX excl?
-  res = spfs_generic_create(parent, subject, mode);
+  res = spfs_generic_create(spfs_parent, subject, mode);
   if (!res) {
     struct inode *inode = d_inode(subject);
     BUG_ON(!inode);
 
-    res = spfs_add_child(sb, SPFS_INODE(parent), inode);
+    res = spfs_add_child(sb, spfs_parent, inode);
   }
   //}
 
@@ -491,15 +496,17 @@ static int
 spfs_mkdir(struct inode *parent, struct dentry *subject, umode_t mode) {
   int res;
   struct super_block *sb;
+  struct spfs_inode *spfs_parent;
 
   BUG_ON(!S_ISDIR(mode));
 
+  spfs_parent = SPFS_INODE(parent);
   sb = parent->i_sb;
 
   BUG_ON(!sb);
 
   // newly created inode-lock {
-  res = spfs_generic_create(parent, subject, mode);
+  res = spfs_generic_create(spfs_parent, subject, mode);
   if (!res) {
     struct inode *inode = d_inode(subject);
     BUG_ON(!inode);
@@ -511,7 +518,7 @@ spfs_mkdir(struct inode *parent, struct dentry *subject, umode_t mode) {
      */
     inc_nlink(parent);
 
-    res = spfs_add_child(sb, SPFS_INODE(parent), inode);
+    res = spfs_add_child(sb, spfs_parent, inode);
   }
   //}
 
@@ -1227,13 +1234,14 @@ spfs_ensure_capacity(struct spfs_inode *inode, size_t in_pos, size_t in_len,
 
     // XXX maybe have async start&capacity update only setting inode and
     // persisting it only on inode unload
+    // `mark_inode_dirty()`
     mutex_lock(&sbi->tree.lock); // XXX read lock
     res = spfs_btree_modify(&sbi->tree, ino, &ctx, spfs_modify_start_cb);
     mutex_unlock(&sbi->tree.lock);
-  }
-  if (res) {
-    // cleanup
-    return res;
+    if (res) {
+      // cleanup
+      return res;
+    }
   }
 
   return 0;
@@ -1336,36 +1344,63 @@ static const struct file_operations spfs_file_ops = {
 };
 
 //=====================================
+struct spfs_iterate_ctx {
+  struct dir_context *dir_ctx;
+  loff_t pos;
+};
+
 static bool
 spfs_iterate_cb(void *closure, struct spfs_inode *cur) {
-  struct dir_context *ctx = closure;
-  const char *name = cur->name;
+  bool result = true;
 
-  size_t nlength = sizeof(name);
-  dir_emit(ctx, name, nlength, cur->i_inode.i_ino, DT_UNKNOWN);
+  struct spfs_iterate_ctx *ctx = closure;
+  const unsigned long ino = cur->i_inode.i_ino;
+  const char *name = cur->name;
+  size_t nlen = strlen(name);
+
+  if (ctx->pos == ctx->dir_ctx->pos) {
+    unsigned type = (cur->i_inode.i_mode >> 12) & 15;
+    result = dir_emit(ctx->dir_ctx, name, nlen, ino, type);
+    if (result) {
+      ++ctx->dir_ctx->pos;
+    }
+  }
   ++ctx->pos;
 
-  return true;
+  return result;
 }
 
 static int
-spfs_iterate(struct file *file, struct dir_context *ctx) {
-
+spfs_iterate(struct file *file, struct dir_context *dir_ctx) {
   struct inode *parent;
+  struct spfs_inode *spfs_parent;
+
+  struct spfs_iterate_ctx ctx = {
+      /**/
+      .dir_ctx = dir_ctx,
+      .pos = 2, /* '.', '..' */
+                /**/
+  };
 
   printk(KERN_INFO "spfs_iterate()\n");
 
   parent = file_inode(file);
-  if (ctx->pos >= parent->i_size) {
-    // TODO re-entrant invocation to iterate how does it work?
-    // probably a limit on how many time we can dir_emit for each invocation
+  spfs_parent = SPFS_INODE(parent);
+
+  /* add '.' & '..' if appropriate */
+  if (!dir_emit_dots(file, dir_ctx)) {
+    return -EIO;
+  }
+
+  if (dir_ctx->pos >= (spfs_parent->capacity + 2)) {
     return 0;
   }
 
-  spfs_for_all_children(SPFS_INODE(parent), ctx, spfs_iterate_cb);
+  spfs_for_all_children(spfs_parent, &ctx, spfs_iterate_cb);
   return 0;
 }
 
+//=====================================
 static const struct file_operations spfs_dir_ops = {
     /**/
     .llseek = generic_file_llseek,
@@ -1520,7 +1555,7 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
   }
 
   root = spfs_inode_by_id(sb, sbi->root_id);
-  if (IS_ERR(root)) {
+  if (IS_ERR(root)) { // XXX change to only do this on NULL and fail otherwise
     mode_t mode = S_IFDIR | S_IRWXU | S_IRWXG | S_IRWXO;
     root = spfs_new_inode(sb, NULL, mode);
     if (IS_ERR(root)) {
@@ -1724,6 +1759,13 @@ static const struct super_operations spfs_super_ops = {
      * This is called with the superblock lock held
      */
     .put_super = spfs_put_super,
+
+    /* http://man7.org/linux/man-pages/man2/statfs.2.html */
+    /* .statfs = */
+
+    /* called by the VFS to show mount options for /proc/<pid>/mounts
+     * .show_options =
+     */
 };
 
 //=====================================

@@ -3,7 +3,6 @@
 
 #include <linux/limits.h>
 #include <linux/types.h>
-#include <stddef.h>
 
 #include "btree.h"
 #include "free_list.h"

@@ -13,10 +13,13 @@ struct spfs_inode {
   struct mutex lock;
   /* } */
 
-  /* Capacity in number of bytes:
-   * - Only used for file extents
+  /* Inode = File
+   * Capacity in number of bytes:
    * - Does not include bytes in extent header
    * - Only includes data writable bytes
+   *
+   * Inode = Directory
+   * Capacity is the number of child inodes
    */
   size_t capacity;
   sector_t start;

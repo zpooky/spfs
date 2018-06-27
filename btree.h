@@ -4,7 +4,6 @@
 #include <linux/fs.h>
 #include <linux/mutex.h>
 #include <linux/types.h>
-#include <stddef.h>
 
 #include "free_list.h"
 #include "shared.h"

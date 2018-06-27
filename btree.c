@@ -1066,11 +1066,3 @@ spfs_btree_insert(struct spfs_btree *self, struct spfs_inode *in) {
 
   return res;
 }
-
-//=====================================
-int
-spfs_btree_remove(struct spfs_btree *tree, spfs_ino ino) {
-  BUG();
-  // XXX
-  return 1;
-}
