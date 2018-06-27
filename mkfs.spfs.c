@@ -18,14 +18,14 @@
 
 /* #define U64 uint64_t */
 /*  */
-/* #define ENDIAN_SWAP_U64(val)                                                   \ */
-/*   ((U64)((((U64)(val) & (U64)0x00000000000000ff) << 56) |                      \ */
-/*          (((U64)(val) & (U64)0x000000000000ff00) << 40) |                      \ */
-/*          (((U64)(val) & (U64)0x0000000000ff0000) << 24) |                      \ */
-/*          (((U64)(val) & (U64)0x00000000ff000000) << 8) |                       \ */
-/*          (((U64)(val) & (U64)0x000000ff00000000) >> 8) |                       \ */
-/*          (((U64)(val) & (U64)0x0000ff0000000000) >> 24) |                      \ */
-/*          (((U64)(val) & (U64)0x00ff000000000000) >> 40) |                      \ */
+/* #define ENDIAN_SWAP_U64(val) \ */
+/*   ((U64)((((U64)(val) & (U64)0x00000000000000ff) << 56) | \ */
+/*          (((U64)(val) & (U64)0x000000000000ff00) << 40) | \ */
+/*          (((U64)(val) & (U64)0x0000000000ff0000) << 24) | \ */
+/*          (((U64)(val) & (U64)0x00000000ff000000) << 8) | \ */
+/*          (((U64)(val) & (U64)0x000000ff00000000) >> 8) | \ */
+/*          (((U64)(val) & (U64)0x0000ff0000000000) >> 24) | \ */
+/*          (((U64)(val) & (U64)0x00ff000000000000) >> 40) | \ */
 /*          (((U64)(val) & (U64)0xff00000000000000) >> 56))) */
 
 struct spfs_super_block_wire {
@@ -134,10 +134,10 @@ mkfs_write_u32(unsigned char *buffer, ssize_t *pos, const uint32_t *value) {
 /* static int
  * mkfs_write_u64(unsigned char *buffer, ssize_t *pos, uint64_t value) {
  *   value = ENDIAN_SWAP_U64(value);
- * 
+ *
  *   memcpy(buffer + *pos, &value, sizeof(value));
  *   *pos += sizeof(value);
- * 
+ *
  *   return 0;
  * }
  */

@@ -220,7 +220,7 @@ spfs_generic_create(struct spfs_inode *parent, struct dentry *dentry,
   BUG_ON(!parent);
   BUG_ON(!dentry);
 
-  sb = parent->i_sb;
+  sb = parent->i_inode.i_sb;
   BUG_ON(!sb);
 
   sbi = sb->s_fs_info;
