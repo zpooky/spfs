@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# mount: /home/spooky/development/repos/spfs/test/mnt: wrong fs type, bad option,
+# bad superblock on /dev/loop0, missing codepage or helper program, or other
+# error.
+
 the_dev="./fs_raw.img"
 the_mount="./mnt"
 
