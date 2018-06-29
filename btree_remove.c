@@ -263,17 +263,16 @@ rebalance(struct spfs_btree *self, struct spfs_bnode *parent,
 
           // 2.
           {
-            //<<===
             {
-              size_t last_idx = bnode_length(left_sibling) - 1;
+              size_t last_idx = bnode_elem_length(left_sibling) - 1;
               bool res =
                   bnode_stable_take_elem(self, left_sibling, last_idx, pivot);
-              assertx(res);
+              BUG_ON(!res);
             }
 
-            size_t last_idx = length(left_sibling->children) - 1;
-            bool res = stable_remove(left_sibling->children, last_idx);
-            assertx(res);
+            size_t last_idx = bnode_child_length(left_sibling) - 1;
+            bool res = bnode_stable_remove_child(left_sibling, last_idx);
+            BUG_ON(!res);
           }
 
           // 3.done with rebalance
@@ -319,44 +318,45 @@ rebalance(struct spfs_btree *self, struct spfs_bnode *parent,
    *      elements, then rebalance the parent
    */
 
-  BTNode<T, keys, Cmp> *const left_child = children[left_idx];
-  BTNode<T, keys, Cmp> *const right_child = children[right_idx];
+  sector_t left_child = bnode_get_child(parent, left_idx);
+  sector_t right_child = bnode_get_child(parent, right_idx);
   {
     if (!left_child && !right_child) {
-      assertx(false);
+      BUG();
       return false;
     }
 
     bool cont = false;
     if (right_child && left_child) {
       // TODO define behaviour
-      if (!is_deficient(*left_child) && !is_deficient(*right_child)) {
+      if (!is_deficient(left_child) && !is_deficient(right_child)) {
         return false;
       }
 
-      const size_t req_len = (length(right_child->elements) + 1);
-      if (remaining_write(left_child->elements) >= req_len) {
+      const size_t req_len = (bnode_elem_length(right_child) + 1);
+      if (remaining_elem_write(left_child) >= req_len) {
         cont = true;
       }
     }
 
     if (!cont) {
-      if (left_child && is_empty(left_child->elements)) {
+      if (left_child && is_elem_empty(left_child)) {
         /*delete left child node if empy*/
-        assertx(is_leaf(*left_child));
+        BUG_ON(!is_leaf(left_child));
+
         { /**/
-          delete left_child;
+          /* TODO delete left_child; */
         }
-        children[left_idx] = nullptr;
+        bnode_set_child(parent, left_idx, 0);
       }
 
       /*delete right child node if empy*/
-      if (right_child && is_empty(right_child->elements)) {
-        assertx(is_leaf(*right_child));
+      if (right_child && is_elem_empty(right_child)) {
+        BUG_ON(!is_leaf(right_child));
         { /**/
-          delete right_child;
+          /* TODO delete right_child; */
         }
-        children[right_idx] = nullptr;
+        bnode_set_child(parent, right_idx, 0);
       }
       return false;
     }
@@ -364,27 +364,27 @@ rebalance(struct spfs_btree *self, struct spfs_bnode *parent,
 
   // 1. move pivot into left
   {
-    T *const res = insert(left_child->elements, std::move(*pivot));
-    assertx(res);
+    struct spfs_bentry *const res = bnode_elem_insert(left_child, pivot);
+    BUG_ON(!res);
     /* We explicitly do not add $gt child here since we will merge all children
      * from $right_child which is the old $gt of $pivot
      */
   }
   // 2. merge right into left and gc right
   {
-    bool res = merge(/*DEST*/ *left_child, /*SRC->gc*/ right_child);
-    assertx(res);
+    bool res = merge(/*DEST*/ left_child, /*SRC->gc*/ right_child);
+    BUG_ON(!res);
   }
   // 3. remove old pivot
   {
     {
-      bool res = stable_remove(elements, piv_idx);
-      assertx(res);
+      bool res = stable_elem_remove(parent, piv_idx);
+      BUG_ON(!res);
     }
 
     {
-      bool res = stable_remove(children, piv_idx + 1);
-      assertx(res);
+      bool res = stable_child_remove(parent, piv_idx + 1);
+      BUG_ON(!res);
     }
   }
 
@@ -393,19 +393,20 @@ rebalance(struct spfs_btree *self, struct spfs_bnode *parent,
 }
 
 static bool
-take_wrapper(BTNode<T, keys, Cmp> &, T *, Dest &dest);
+take_wrapper(struct spfs_btree *, struct spfs_bnode *, struct spfs_bentry *);
 
+/* struct spfs_btree *self, struct spfs_bnode *tree, struct spfs_bentry *subject */
 static bool
-take_leaf(BTNode<T, keys, Cmp> &self, T *subject, Dest &dest) {
-  assertx(is_leaf(self));
+take_leaf(struct spfs_btree*self,struct spfs_bnode*tree, struct spfs_bentry *subject) {
+  BUG_ON(!is_leaf(self));
 
-  auto &elements = self.elements;
-  auto &children = self.children;
+  /* auto &elements = self.elements; */
+  /* auto &children = self.children; */
 
-  const size_t index = index_of(elements, subject);
-  assertxs(index != capacity(elements), index, length(elements));
+  size_t index = index_of(tree, subject);
+  /* assertxs(index != capacity(elements), index, length(elements)); */
   {
-    bool res = stable_take(elements, index, dest);
+    bool res = stable_elem_take(tree, index, dest);
     assertx(res);
   }
   {
@@ -509,55 +510,63 @@ take_int_node(BTNode<T, keys, Cmp> &self, T *subject, Dest &dest) {
 }
 
 static bool
-take_wrapper(BTNode<T, keys, Cmp> &self, T *subject, Dest &dest) {
-  if (is_leaf(self)) {
-    return take_leaf(self, subject, dest);
+take_wrapper(struct spfs_btree *self, struct spfs_bnode *tree, struct spfs_bentry *subject) {
+  if (is_leaf(tree)) {
+    return take_leaf(self, tree, subject);
   }
 
-  return take_int_node(self, subject, dest);
+  return take_int_node(self, tree, subject);
 }
 
 static bool
-take(BTNode<T, keys, C> *const tree, const Key &needle, Dest &dest,
-     bool &balance) {
-  if (tree == nullptr) {
-    balance = false;
+take(struct spfs_btree *self, struct spfs_bnode *tree, spfs_ino needle,
+     bool *balance) {
+  if (tree == NULL) {
+    *balance = false;
     return false;
   }
 
-  auto &children = tree->children;
-  auto &elements = tree->elements;
+  /* auto &children = tree->children; */
+  /* auto &elements = tree->elements; */
 
-  C cmp;
-  T *const gte = bin_find_gte<T, keys, Key, C>(elements, needle, cmp);
+  /*
+   * static struct spfs_bentry *
+   * bnode_bin_find_gte(struct spfs_btree *self, struct spfs_bnode *node,
+   *                    spfs_ino needle) {
+   */
+
+  /*
+   * static bool
+   * bentry_is_eq(const struct spfs_bentry *f, spfs_ino id) {
+   */
+
+  T *const gte = bnode_bin_find_gte(self, tree, needle);
   if (gte) {
-    if (!cmp(needle, *gte) && !cmp(*gte, needle)) {
-      /* equal */
-
-      balance = take_wrapper(*tree, gte, dest);
+    if (bentry_is_eq(gte, needle)) {
+      balance = take_wrapper(self, tree, gte);
       return true;
     }
 
     /* Go down less than element child */
-    const size_t index = index_of(elements, gte);
-    assertxs(index != capacity(elements), index, length(elements));
+    size_t index = index_of(tree, gte);
+    /* assertxs(index != capacity(elements), index, length(elements)); */
 
-    auto child = children[index];
-    const bool result = take(child, needle, dest, balance);
+    sector_t child = bnode_get_child(tree, index);
+    const bool result = take(self, child, needle, balance);
     if (balance) {
-      balance = rebalance(*tree, /*pivot*/ gte, ChildDir_LEFT);
+      balance = rebalance(self, tree, /*pivot*/ gte, ChildDir_LEFT);
     }
     return result;
   }
 
   /* needle is greater than any other element in elements */
   BTNode<T, keys, C> **child = last(children);
-  assertxs(child, length(children));
-  const bool result = take(*child, needle, dest, balance);
+  /* assertxs(child, length(children)); */
+  const bool result = take(self, child, needle, balance);
   if (balance) {
     T *const pivot = last(elements);
     assertx(pivot);
-    balance = rebalance(*tree, pivot, ChildDir_RIGHT);
+    balance = rebalance(self, tree, pivot, ChildDir_RIGHT);
   }
 
   return result;
@@ -567,7 +576,7 @@ int
 spfs_btree_remove(struct spfs_btree *tree, spfs_ino ino) {
   impl::BTreeNop<T> nop;
   bool balance = false;
-  const bool result = impl::take(self.root, needle, nop, balance);
+  const bool result = impl::take(tree, self.root, needle, nop, balance);
   if (balance) {
     BTNode<T, keys, Comparator> *const old = self.root;
     auto &elements = old->elements;

@@ -83,6 +83,15 @@ static const struct super_operations spfs_super_ops;
  *
  * XXX cache file block $index togther with $length, not just $start sector_t in
  * spfs_inode struct.
+ *
+ *
+ * XXX
+ * pr_info("Information\n");
+ * pr_err("Error\n");
+ * pr_alert("Really big problem\n");
+ * pr_emerg("Life as we know it is over\n");*
+ * instead of:
+ * printk(KERN_ERR ...
  */
 
 //=====================================
