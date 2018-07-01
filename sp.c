@@ -395,7 +395,7 @@ spfs_add_child(struct super_block *sb, struct spfs_inode *parent,
   }
 
   start = parent->start;
-// TODO this wont work when the first is full and the next is created...
+  // TODO this wont work when the first is full and the next is created...
 
 Lit:
   if (start) {
@@ -1155,27 +1155,25 @@ spfs_blocks_for(const struct spfs_super_block *sbi, size_t bytes) {
   return result;
 }
 
-static size_t
-spfs_calc_extra_blocks(struct spfs_inode *inode, size_t capacity, size_t in_pos,
-                       size_t in_len) {
+static size_t __attribute__((optimize("O0")))
+spfs_calc_extra_blocks(struct spfs_inode *inode, size_t in_pos, size_t in_len) {
   struct super_block *sb;
   struct spfs_super_block *sbi;
 
   size_t extra_bytes;
-  size_t block_size;
   size_t end;
 
   sb = inode->i_inode.i_sb;
   sbi = sb->s_fs_info;
 
-  block_size = sbi->block_size;
   end = in_pos + in_len;
 
+  /* We do not have to allocate more space */
   if (end <= inode->capacity) {
     return 0;
   }
 
-  extra_bytes = end - capacity;
+  extra_bytes = end - inode->capacity;
   extra_bytes += spfs_sizeof_file_extent_header();
   return spfs_blocks_for(sbi, extra_bytes);
 
@@ -1188,7 +1186,7 @@ spfs_calc_extra_blocks(struct spfs_inode *inode, size_t capacity, size_t in_pos,
   /*   return in_blocks - capacity; */
   /* } */
 
-  return 0;
+  /* return 0; */
 }
 
 static int
@@ -1205,7 +1203,7 @@ spfs_ensure_capacity(struct spfs_inode *inode, size_t in_pos, size_t in_len,
 
   *extra = 0;
 
-  extra_blocks = spfs_calc_extra_blocks(inode, inode->capacity, in_pos, in_len);
+  extra_blocks = spfs_calc_extra_blocks(inode, in_pos, in_len);
   if (extra_blocks == 0) {
     return 0;
   }
@@ -1244,7 +1242,8 @@ spfs_ensure_capacity(struct spfs_inode *inode, size_t in_pos, size_t in_len,
     }
   }
 
-  return 0;
+  res = 0;
+  return res;
 }
 
 /*
@@ -1419,30 +1418,31 @@ spfs_read_super_block(struct buffer_head *bh, struct spfs_super_block *super) {
 
   res = -EINVAL;
   pos = 0;
-  if (spfs_sb_read_u32(bh, &pos, &super->magic)) {
-    goto Lout;
-  }
-  if (spfs_sb_read_u32(bh, &pos, &super->version)) {
-    goto Lout;
-  }
-  if (spfs_sb_read_u32(bh, &pos, &super->block_size)) {
-    goto Lout;
-  }
-  if (spfs_sb_read_u32(bh, &pos, &dummy)) {
+  if (!spfs_sb_read_u32(bh, &pos, &super->magic)) {
     goto Lout;
   }
 
-  if (spfs_sb_read_u32(bh, &pos, &super->id)) {
+  if (!spfs_sb_read_u32(bh, &pos, &super->version)) {
     goto Lout;
   }
-  if (spfs_sb_read_u32(bh, &pos, &super->root_id)) {
+  if (!spfs_sb_read_u32(bh, &pos, &super->block_size)) {
+    goto Lout;
+  }
+  if (!spfs_sb_read_u32(bh, &pos, &dummy)) {
     goto Lout;
   }
 
-  if (spfs_sb_read_u32(bh, &pos, &super->btree_offset)) {
+  if (!spfs_sb_read_u32(bh, &pos, &super->id)) {
     goto Lout;
   }
-  if (spfs_sb_read_u32(bh, &pos, &super->free_list_offset)) {
+  if (!spfs_sb_read_u32(bh, &pos, &super->root_id)) {
+    goto Lout;
+  }
+
+  if (!spfs_sb_read_u32(bh, &pos, &super->btree_offset)) {
+    goto Lout;
+  }
+  if (!spfs_sb_read_u32(bh, &pos, &super->free_list_offset)) {
     goto Lout;
   }
 
@@ -1506,16 +1506,16 @@ spfs_set_blocksize(struct super_block *sb, size_t block_size) {
   return 0;
 }
 
-static int
+static int __attribute__((optimize("O0")))
 spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
   int res;
   struct spfs_inode *root;
   struct spfs_super_block *sbi;
   const sector_t super_start = 0;
 
-  BUG_ON(!sb);
-
   printk(KERN_INFO "spfs_kill_super_block()\n");
+
+  BUG_ON(!sb);
 
   sbi = kzalloc(sizeof(*sbi), GFP_KERNEL);
   if (!sbi) {
@@ -1722,8 +1722,8 @@ spfs_write_inode(struct inode *inode, struct writeback_control *wbc) {
 //=====================================
 static struct file_system_type spfs_fs_type = {
     .name = "spfs",
-    /* .fs_flags = FS_REQUIRES_DEV, */
-    .fs_flags = 0,
+    .fs_flags = FS_REQUIRES_DEV,
+    /* .fs_flags = 0, */
     /* Mount an instance of the filesystem */
     .mount = spfs_mount,
     /* Shutdown an instance of the filesystem... */

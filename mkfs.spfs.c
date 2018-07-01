@@ -1,6 +1,5 @@
 #include <arpa/inet.h>
 #include <assert.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <string.h> //memset
 
@@ -12,6 +11,7 @@
 #include <sys/stat.h> //mode_t
 #include <sys/types.h>
 
+#include "mkfs.spfs.h"
 #include "spfs.h"
 
 #define SPOOKY_FS_BLOCK_SIZE 4096
@@ -27,36 +27,6 @@
 /*          (((U64)(val) & (U64)0x0000ff0000000000) >> 24) | \ */
 /*          (((U64)(val) & (U64)0x00ff000000000000) >> 40) | \ */
 /*          (((U64)(val) & (U64)0xff00000000000000) >> 56))) */
-
-struct spfs_super_block_wire {
-  uint32_t magic;
-  uint32_t version;
-  uint32_t block_size;
-  uint32_t dummy;
-
-  uint32_t id;
-  uint32_t root_id;
-
-  uint32_t btree;
-  uint32_t free_list;
-
-  /* transient: { */
-  size_t blocks;
-  /* } */
-};
-
-struct spfs_free_list {
-  uint32_t magic;
-  uint32_t entries;
-
-  /* list of spfs_free_list */
-  uint32_t next;
-};
-
-struct spfs_free_entry {
-  uint32_t start;
-  uint32_t blocks;
-};
 
 static size_t
 mkfs_bytes_of(struct stat *s, size_t blocks) {
@@ -102,7 +72,6 @@ mkfs_block_size(int fd, struct spfs_super_block_wire *super) {
 
   return 0;
 }
-
 static int
 zero_fill(int fd, size_t bytes) {
   size_t i = 0;
@@ -183,10 +152,10 @@ super_block(int fd, const struct spfs_super_block_wire *super) {
     return 1;
   }
 
-  if (mkfs_write_u32(buffer, &pos, &super->btree)) {
+  if (mkfs_write_u32(buffer, &pos, &super->btree_offset)) {
     return 1;
   }
-  if (mkfs_write_u32(buffer, &pos, &super->free_list)) {
+  if (mkfs_write_u32(buffer, &pos, &super->free_list_offset)) {
     return 1;
   }
 
@@ -298,8 +267,8 @@ main(int argc, const char **args) {
         .dummy = 0,
         .id = SPFS_ROOT_INODE_NO,
         .root_id = SPFS_ROOT_INODE_NO,
-        .btree = 0,
-        .free_list = 1,
+        .btree_offset = 0,
+        .free_list_offset = 1,
 
         /* transient: { */
         .blocks = 0,

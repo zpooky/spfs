@@ -3,14 +3,14 @@ spfs-objs := sp.o btree.o free_list.o util.o
 ccflags-y := -DSPFS_DEBUG
 
 MKFS := mkfs.spfs
-OBJECTS := mkfs.spfs.o
+FSCK := fsck.spfs
 CXXFLAG := -std=gnu89 -Wall -Werror -Wextra
 
 CFLAG_DEBUG := -g -DDEBUG
 
 # CFLAGS_sp.o := -DDEBUG
 
-all: $(MKFS) ko_debug
+all: $(MKFS) $(FSCK) ko_debug
 
 ko:
 	# make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
@@ -24,8 +24,11 @@ ko_debug:
 %.o: %.c
 	$(CC) $(CXXFLAG) -c $< -o $@
 
-$(MKFS): $(OBJECTS)
-	$(CC) $(OBJECTS) -o $(MKFS)
+$(MKFS): mkfs.spfs.o
+	$(CC) $^ -o $@
+
+$(FSCK): fsck.spfs.o
+	$(CC) $^ -o $@
 
 clean:
 	rm $(MKFS)

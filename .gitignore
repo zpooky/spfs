@@ -60,3 +60,5 @@ mkfs.spfs
 test/fs_raw
 .gdb_breakpoints
 test/fs_raw.img
+fsck.spfs
+spfs_simple.img

@@ -44,3 +44,7 @@ ${su_do} umount ${the_mount}
 echo ""
 echo "${su_do} rmmod ${the_ko_name}"
 ${su_do} rmmod "${the_ko_name}"
+
+
+# mount -t spfs_simple -o loop spfs_simple.img mnt
+# mount -t spfs -o loop spfs_simple.img mnt
