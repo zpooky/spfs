@@ -10,13 +10,13 @@
 
 struct spfs_free_node {
   sector_t start;
-  size_t blocks;
+  uint32_t blocks;
   struct spfs_free_node *next;
 };
 
 struct spfs_free_list {
   struct mutex lock; // TODO spin lock
-  size_t blocks;
+  uint32_t blocks;
   struct spfs_free_node *root;
 };
 

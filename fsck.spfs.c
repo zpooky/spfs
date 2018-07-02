@@ -28,7 +28,7 @@ fsck_read_u32(int fd, uint32_t *data) {
 
 static void
 print_super(struct spfs_super_block_wire *super) {
-  printf("super:[magic:%u,version:%u,block_size:%u,id:%u,root_id:%u,btree_of:"
+  printf("super:[magic:%X,version:%u,block_size:%u,id:%u,root_id:%u,btree_of:"
          "%u,free_of:%u]\n", //
          super->magic, super->version, super->block_size, super->id,
          super->root_id, super->btree_offset, super->free_list_offset);
@@ -54,10 +54,6 @@ read_super_block(int fd, struct spfs_super_block_wire *super) {
   }
   if (fsck_read_u32(fd, &super->block_size)) {
     fprintf(stderr, "failed super->block_size\n");
-    goto Lout;
-  }
-  if (fsck_read_u32(fd, &super->dummy)) {
-    fprintf(stderr, "failed super->dummy\n");
     goto Lout;
   }
 
@@ -141,7 +137,7 @@ read_free_entry(int fd, struct spfs_free_entry *entry) {
 
 static void
 print_free_header(struct spfs_free_list *header) {
-  printf("free_list:[magic:%u,entries:%u,next:%u]\n", //
+  printf("free_list:[magic:%X,entries:%u,next:%u]\n", //
          header->magic, header->entries, header->next);
 }
 

@@ -21,7 +21,7 @@ struct spfs_inode {
    * Inode = Directory
    * Capacity is the number of child inodes
    */
-  size_t capacity;
+  uint32_t capacity;
   sector_t start;
   char name[SPOOKY_FS_NAME_MAX];
 };

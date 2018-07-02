@@ -8,7 +8,7 @@ static int
 spfs_read_entry(struct buffer_head *bh, size_t *bh_pos,
                 struct spfs_free_node *result) {
 
-  if (!spfs_sb_read_u32(bh, bh_pos, &result->start)) {
+  if (!spfs_sb_read_sector(bh, bh_pos, &result->start)) {
     return 1;
   }
   if (!spfs_sb_read_u32(bh, bh_pos, &result->blocks)) {
@@ -38,15 +38,15 @@ spfs_init_free_list_entry(struct buffer_head *bh, size_t *bh_pos) {
 }
 
 static int
-spfs_read_header(struct buffer_head *bh, size_t *bh_pos, unsigned long *length,
+spfs_read_header(struct buffer_head *bh, size_t *bh_pos, uint32_t *length,
                  sector_t *next) {
-  unsigned long magic;
+  uint32_t magic;
   if (!spfs_sb_read_u32(bh, bh_pos, &magic)) {
     return -EINVAL;
   }
 
   if (magic != SPOOKY_FS_FL_MAGIC) {
-    printk(KERN_INFO "invalid Free-List magic:[%lu] expected:[%u]", //
+    printk(KERN_INFO "invalid Free-List magic:[%u] expected:[%u]", //
            magic, SPOOKY_FS_FL_MAGIC);
     return -EINVAL;
   }
@@ -54,7 +54,7 @@ spfs_read_header(struct buffer_head *bh, size_t *bh_pos, unsigned long *length,
   if (!spfs_sb_read_u32(bh, bh_pos, length)) {
     return -EINVAL;
   }
-  if (!spfs_sb_read_u32(bh, bh_pos, next)) {
+  if (!spfs_sb_read_sector(bh, bh_pos, next)) {
     return -EINVAL;
   }
 
@@ -71,10 +71,10 @@ spfs_free_init(struct super_block *sb, struct spfs_free_list *list,
 
 Lit:
   if (head) {
-    unsigned long free_length;
+    uint32_t free_length;
     sector_t free_next;
 
-    unsigned int i = 0;
+    uint32_t i = 0;
     struct buffer_head *bh;
     size_t bh_pos = 0;
 

@@ -10,8 +10,8 @@ struct spfs_super_block_wire {
   uint32_t block_size;
   uint32_t dummy;
 
-  uint64_t id;
-  uint64_t root_id;
+  uint32_t id;
+  uint32_t root_id;
 
   uint32_t btree_offset;
   uint32_t free_list_offset;

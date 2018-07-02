@@ -141,9 +141,6 @@ super_block(int fd, const struct spfs_super_block_wire *super) {
   if (mkfs_write_u32(buffer, &pos, &super->block_size)) {
     return 1;
   }
-  if (mkfs_write_u32(buffer, &pos, &super->dummy)) {
-    return 1;
-  }
 
   if (mkfs_write_u32(buffer, &pos, &super->id)) {
     return 1;

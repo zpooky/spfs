@@ -97,19 +97,16 @@ static const struct super_operations spfs_super_ops;
 //=====================================
 static void
 spfs_setup_inode_fp(struct inode *inode) {
-  switch (inode->i_mode & S_IFMT) {
-  case S_IFREG:
+  if (S_ISREG(inode->i_mode)) {
     inode->i_op = &spfs_inode_ops;
     inode->i_fop = &spfs_file_ops;
-    break;
-  case S_IFDIR:
+  } else if (S_ISDIR(inode->i_mode)) {
     inode->i_op = &spfs_inode_ops;
     inode->i_fop = &spfs_dir_ops;
 
     /* directory inodes start off with i_nlink == 2 (for "." entry) */
     inc_nlink(inode);
-    break;
-  default:
+  } else {
     BUG();
   }
 }
@@ -144,6 +141,8 @@ spfs_new_inode(struct super_block *sb, struct spfs_inode *parent,
        * Init uid,gid,mode for new inode according to posix standards
        */
       inode_init_owner(inode, &parent->i_inode, mode);
+    } else {
+      inode->i_mode = mode;
     }
 
     inode->i_ctime = current_time(inode);
@@ -304,7 +303,7 @@ spfs_parse_dir_block(struct buffer_head *bh, size_t *pos,
     return -EINVAL;
   }
 
-  if (!spfs_sb_read_u32(bh, pos, &out->next)) {
+  if (!spfs_sb_read_sector(bh, pos, &out->next)) {
     return -EINVAL;
   }
   if (!spfs_sb_read_u32(bh, pos, &out->children)) {
@@ -581,7 +580,7 @@ Lit:
     while (i < block.children) {
       spfs_ino cur_ino;
 
-      if (!spfs_sb_read_u32(bh, &bh_pos, &cur_ino)) {
+      if (!spfs_sb_read_ino(bh, &bh_pos, &cur_ino)) {
         // cleanup
         res = -EINVAL;
         goto Lunlock;
@@ -765,7 +764,7 @@ spfs_parse_file_extent(struct buffer_head *bh, size_t *pos,
     return -EINVAL;
   }
 
-  if (!spfs_sb_read_u32(bh, pos, &out->next)) {
+  if (!spfs_sb_read_sector(bh, pos, &out->next)) {
     return -EINVAL;
   }
   if (!spfs_sb_read_u32(bh, pos, &out->capacity)) {
@@ -1165,8 +1164,7 @@ spfs_blocks_for(const struct spfs_super_block *sbi, size_t bytes) {
 }
 
 static size_t
-spfs_calc_extra_blocks(struct spfs_inode *inode, size_t capacity, size_t in_pos,
-                       size_t in_len) {
+spfs_calc_extra_blocks(struct spfs_inode *inode, size_t in_pos, size_t in_len) {
   struct super_block *sb;
   struct spfs_super_block *sbi;
 
@@ -1424,7 +1422,6 @@ static int
 spfs_read_super_block(struct buffer_head *bh, struct spfs_super_block *super) {
   int res;
   size_t pos;
-  uint32_t dummy;
 
   res = -EINVAL;
   pos = 0;
@@ -1438,29 +1435,27 @@ spfs_read_super_block(struct buffer_head *bh, struct spfs_super_block *super) {
   if (!spfs_sb_read_u32(bh, &pos, &super->block_size)) {
     goto Lout;
   }
-  if (!spfs_sb_read_u32(bh, &pos, &dummy)) {
+
+  if (!spfs_sb_read_ino(bh, &pos, &super->id)) {
+    goto Lout;
+  }
+  if (!spfs_sb_read_ino(bh, &pos, &super->root_id)) {
     goto Lout;
   }
 
-  if (!spfs_sb_read_u64(bh, &pos, &super->id)) {
+  if (!spfs_sb_read_sector(bh, &pos, &super->btree_offset)) {
     goto Lout;
   }
-  if (!spfs_sb_read_u64(bh, &pos, &super->root_id)) {
-    goto Lout;
-  }
-
-  if (!spfs_sb_read_u32(bh, &pos, &super->btree_offset)) {
-    goto Lout;
-  }
-  if (!spfs_sb_read_u32(bh, &pos, &super->free_list_offset)) {
+  if (!spfs_sb_read_sector(bh, &pos, &super->free_list_offset)) {
     goto Lout;
   }
 
   /* pr_err("magic", start); */
-  pr_err("super:[magic:%u,version:%u,block_size:%u,id:%u,root_id:%u,btree_of:%u"
-         "free_of:%u]\n", //
-         super->magic, super->version, super->block_size, super->id,
-         super->root_id, super->btree_offset, super->free_list_offset);
+  pr_err(
+      "super:[magic:%X,version:%u,block_size:%u,id:%lu,root_id:%lu,btree_of:%lu"
+      "free_of:%lu]\n", //
+      super->magic, super->version, super->block_size, super->id,
+      super->root_id, super->btree_offset, super->free_list_offset);
 
   res = 0;
 Lout:
@@ -1490,7 +1485,7 @@ spfs_super_block_init(struct super_block *sb, struct spfs_super_block *super,
   }
 
   if (super->magic != SPOOKY_FS_SUPER_MAGIC) {
-    pr_err("super->magic[%lu] != SPOOKY_FS_SUPER_MAGIC[%u]\n", //
+    pr_err("super->magic[%u] != SPOOKY_FS_SUPER_MAGIC[%u]\n", //
            super->magic, SPOOKY_FS_SUPER_MAGIC);
     res = -EINVAL;
     goto Lrelease;
@@ -1813,15 +1808,15 @@ spfs_init(void) {
     pr_err("Sucessfully register_filesystem(simplefs)\n");
   }
 
-  pr_err("sizeof(int): %zu, sizeof(size_t): %zu, sizeof(sector_t): %zu, "
-         "sizeof(unsigned long): %zu, sizeof(void*): %zu, sizeof(u32): %zu, "
-         "sizeof(uint32_t): %zu, sizeof(uintptr_t): %zu, sizeof(bool): %zu, "
-         "sizeof(short): %zu, sizeof(unsigned long long): %zu, "
-         "sizeof(ssize_t): %zu", //
+  pr_err("int: %zu, size_t: %zu, sector_t: %zu, "
+         "unsigned long: %zu, void*: %zu, u32: %zu, "
+         "uint32_t: %zu, uintptr_t: %zu, bool: %zu\n",
          sizeof(int), sizeof(size_t), sizeof(sector_t), sizeof(unsigned long),
          sizeof(void *), sizeof(u32), sizeof(uint32_t), sizeof(uintptr_t),
-         sizeof(bool), sizeof(short), sizeof(unsigned long long),
-         sizeof(ssize_t));
+         sizeof(bool));
+
+  pr_err("short: %zu, unsigned long long: %zu, ssize_t: %zu\n", //
+         sizeof(short), sizeof(unsigned long long), sizeof(ssize_t));
 
   return res;
 }

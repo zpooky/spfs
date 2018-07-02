@@ -356,7 +356,7 @@ bnode_bin_insert_b(struct spfs_btree *self, struct spfs_bnode *node,
 static int
 spfs_inode_parse(struct buffer_head *bh, struct spfs_inode *out) {
   struct inode *out_inode = &out->i_inode;
-  unsigned long magic;
+  uint32_t magic;
   size_t pos = 0;
 
   if (!spfs_sb_read_u32(bh, &pos, &magic)) {
@@ -368,7 +368,7 @@ spfs_inode_parse(struct buffer_head *bh, struct spfs_inode *out) {
 
   {
     loff_t size;
-    if (!spfs_sb_read_u32(bh, &pos, &out_inode->i_ino)) {
+    if (!spfs_sb_read_ino(bh, &pos, &out_inode->i_ino)) {
       return -EIO;
     }
     if (!spfs_sb_read_u64(bh, &pos, &size)) {
@@ -381,8 +381,8 @@ spfs_inode_parse(struct buffer_head *bh, struct spfs_inode *out) {
   }
 
   {
-    unsigned long gid;
-    unsigned long uid;
+    uint32_t gid;
+    uint32_t uid;
     if (!spfs_sb_read_u32(bh, &pos, &gid)) {
       return -EIO;
     }
@@ -396,9 +396,9 @@ spfs_inode_parse(struct buffer_head *bh, struct spfs_inode *out) {
   }
 
   {
-    unsigned long long atime;
-    unsigned long long mtime;
-    unsigned long long ctime;
+    uint64_t atime;
+    uint64_t mtime;
+    uint64_t ctime;
     if (!spfs_sb_read_u64(bh, &pos, &atime)) {
       return -EIO;
     }
@@ -425,7 +425,7 @@ spfs_inode_parse(struct buffer_head *bh, struct spfs_inode *out) {
     return -EIO;
   }
 
-  if (!spfs_sb_read_u32(bh, &pos, &out->start)) {
+  if (!spfs_sb_read_sector(bh, &pos, &out->start)) {
     return -EIO;
   }
 
