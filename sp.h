@@ -9,9 +9,9 @@
 #include "spfs.h"
 
 struct spfs_super_block {
-  unsigned long version;
-  unsigned long magic;
-  unsigned long block_size;
+  uint32_t version;
+  uint32_t magic;
+  uint32_t block_size;
 
   sector_t btree_offset;
   sector_t free_list_offset;

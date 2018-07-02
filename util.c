@@ -9,7 +9,7 @@ spfs_sb_remaining(struct buffer_head *bh, size_t pos) {
 /* ===================================== */
 
 extern bool
-spfs_sb_read_u16(struct buffer_head *bh, size_t *pos, unsigned short *out) {
+spfs_sb_read_u16(struct buffer_head *bh, size_t *pos, uint16_t *out) {
   if (spfs_sb_remaining(bh, *pos) < sizeof(*out)) {
     return false;
   }
@@ -23,7 +23,7 @@ spfs_sb_read_u16(struct buffer_head *bh, size_t *pos, unsigned short *out) {
 }
 
 extern bool
-spfs_sb_write_u16(struct buffer_head *bh, size_t *pos, unsigned short val) {
+spfs_sb_write_u16(struct buffer_head *bh, size_t *pos, uint16_t val) {
   if (spfs_sb_remaining(bh, *pos) < sizeof(val)) {
     return false;
   }
@@ -38,7 +38,7 @@ spfs_sb_write_u16(struct buffer_head *bh, size_t *pos, unsigned short val) {
 
 /* ===================================== */
 bool
-spfs_sb_read_u32(struct buffer_head *bh, size_t *pos, unsigned long *out) {
+spfs_sb_read_u32(struct buffer_head *bh, size_t *pos, uint32_t *out) {
   if (spfs_sb_remaining(bh, *pos) < sizeof(*out)) {
     return false;
   }
@@ -53,7 +53,7 @@ spfs_sb_read_u32(struct buffer_head *bh, size_t *pos, unsigned long *out) {
 
 /* ===================================== */
 bool
-spfs_sb_write_u32(struct buffer_head *bh, size_t *pos, unsigned long val) {
+spfs_sb_write_u32(struct buffer_head *bh, size_t *pos, uint32_t val) {
   if (spfs_sb_remaining(bh, *pos) < sizeof(val)) {
     return false;
   }
@@ -68,7 +68,7 @@ spfs_sb_write_u32(struct buffer_head *bh, size_t *pos, unsigned long val) {
 
 /* ===================================== */
 bool
-spfs_sb_read_u64(struct buffer_head *bh, size_t *pos, u64 *out) {
+spfs_sb_read_u64(struct buffer_head *bh, size_t *pos, uint64_t *out) {
   if (spfs_sb_remaining(bh, *pos) < sizeof(*out)) {
     return false;
   }
@@ -82,7 +82,7 @@ spfs_sb_read_u64(struct buffer_head *bh, size_t *pos, u64 *out) {
 }
 
 bool
-spfs_sb_write_u64(struct buffer_head *bh, size_t *pos, u64 val) {
+spfs_sb_write_u64(struct buffer_head *bh, size_t *pos, uint64_t val) {
   if (spfs_sb_remaining(bh, *pos) < sizeof(val)) {
     return false;
   }

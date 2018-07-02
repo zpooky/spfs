@@ -276,7 +276,7 @@ Lout:
 //=====================================
 struct spfs_dir_block {
   sector_t next;
-  unsigned long children;
+  uint32_t children;
 };
 
 struct spfs_dir_entry {
@@ -285,7 +285,7 @@ struct spfs_dir_entry {
   // example: hardlink map the same inode in different places in the dir tree
   // and also under different names. Therefore name should be present in the
   // parent dir inode list not in the inode itself.
-  unsigned long ino;
+  spfs_ino ino;
   /* char name[] */
 };
 
@@ -296,7 +296,7 @@ spfs_parse_dir_block(struct buffer_head *bh, size_t *pos,
    * folder_block:[next:sector_t, children:u32, cx: child[children]]
    */
 
-  unsigned long magic;
+  uint32_t magic;
   if (!spfs_sb_read_u32(bh, pos, &magic)) {
     return -EINVAL;
   }
@@ -404,7 +404,7 @@ spfs_add_child(struct super_block *sb, struct spfs_inode *parent,
   }
 
   start = parent->start;
-// TODO this wont work when the first is full and the next is created...
+  // TODO this wont work when the first is full and the next is created...
 
 Lit:
   if (start) {
@@ -561,7 +561,7 @@ Lit:
   if (child_list) {
     struct buffer_head *bh;
     struct spfs_dir_block block;
-    unsigned long i;
+    uint32_t i;
     size_t bh_pos;
 
     bh = sb_bread(sb, child_list);
@@ -747,15 +747,15 @@ struct spfs_file_extent {
   /* block id of next extent */
   sector_t next;
   /* capacity in number of blocks */
-  unsigned long capacity;
+  uint32_t capacity;
   /* length in number of bytes */
-  unsigned long length;
+  uint32_t length;
 };
 
 static int
 spfs_parse_file_extent(struct buffer_head *bh, size_t *pos,
                        struct spfs_file_extent *out) {
-  unsigned long magic;
+  uint32_t magic;
 
   /* [magic:u32, next:sector_t, cap:u32, length:u32, raw:cap] */
   if (!spfs_sb_read_u32(bh, pos, &magic)) {
@@ -850,7 +850,7 @@ spfs_read_file_extent(struct super_block *sb, sector_t * /*OUT*/ next,
   // and skip over unneeded sectors
 
   do {
-    unsigned int con;
+    size_t con;
 
     con = MIN(*pos, MIN(spfs_sb_remaining(bh, bh_pos), header.length));
     bh_pos += con;
@@ -1164,8 +1164,9 @@ spfs_blocks_for(const struct spfs_super_block *sbi, size_t bytes) {
   return result;
 }
 
-static size_t __attribute__((optimize("O0")))
-spfs_calc_extra_blocks(struct spfs_inode *inode, size_t in_pos, size_t in_len) {
+static size_t
+spfs_calc_extra_blocks(struct spfs_inode *inode, size_t capacity, size_t in_pos,
+                       size_t in_len) {
   struct super_block *sb;
   struct spfs_super_block *sbi;
 
@@ -1205,7 +1206,7 @@ spfs_ensure_capacity(struct spfs_inode *inode, size_t in_pos, size_t in_len,
   struct super_block *sb;
   struct spfs_super_block *sbi;
   size_t extra_blocks;
-  const unsigned long ino = inode->i_inode.i_ino;
+  const spfs_ino ino = inode->i_inode.i_ino;
 
   sb = inode->i_inode.i_sb;
   sbi = sb->s_fs_info;
@@ -1362,7 +1363,7 @@ spfs_iterate_cb(void *closure, struct spfs_inode *cur) {
   bool result = true;
 
   struct spfs_iterate_ctx *ctx = closure;
-  const unsigned long ino = cur->i_inode.i_ino;
+  const spfs_ino ino = cur->i_inode.i_ino;
   const char *name = cur->name;
   size_t nlen = strlen(name);
 
@@ -1423,7 +1424,7 @@ static int
 spfs_read_super_block(struct buffer_head *bh, struct spfs_super_block *super) {
   int res;
   size_t pos;
-  unsigned long dummy;
+  uint32_t dummy;
 
   res = -EINVAL;
   pos = 0;
@@ -1441,10 +1442,10 @@ spfs_read_super_block(struct buffer_head *bh, struct spfs_super_block *super) {
     goto Lout;
   }
 
-  if (!spfs_sb_read_u32(bh, &pos, &super->id)) {
+  if (!spfs_sb_read_u64(bh, &pos, &super->id)) {
     goto Lout;
   }
-  if (!spfs_sb_read_u32(bh, &pos, &super->root_id)) {
+  if (!spfs_sb_read_u64(bh, &pos, &super->root_id)) {
     goto Lout;
   }
 
@@ -1521,7 +1522,7 @@ spfs_set_blocksize(struct super_block *sb, size_t block_size) {
   return 0;
 }
 
-static int __attribute__((optimize("O0")))
+static int
 spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
   int res;
   struct spfs_inode *root;
@@ -1654,7 +1655,7 @@ spfs_free_inode_cb(struct rcu_head *head) {
   BUG_ON(!inode);
   BUG_ON(!spfs_inode_SLAB);
 
-  pr_debug("freeing inode %lu\n", (unsigned long)inode->i_ino);
+  pr_debug("freeing inode %lu\n", (spfs_ino)inode->i_ino);
   kmem_cache_free(spfs_inode_SLAB, SPFS_INODE(inode));
 }
 
