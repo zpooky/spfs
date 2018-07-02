@@ -44,17 +44,16 @@ spfs_read_header(struct buffer_head *bh, size_t *bh_pos, uint32_t *length,
   if (!spfs_sb_read_u32(bh, bh_pos, &magic)) {
     return -EINVAL;
   }
-
-  if (magic != SPOOKY_FS_FL_MAGIC) {
-    printk(KERN_INFO "invalid Free-List magic:[%u] expected:[%u]", //
-           magic, SPOOKY_FS_FL_MAGIC);
-    return -EINVAL;
-  }
-
   if (!spfs_sb_read_u32(bh, bh_pos, length)) {
     return -EINVAL;
   }
   if (!spfs_sb_read_sector(bh, bh_pos, next)) {
+    return -EINVAL;
+  }
+
+  if (magic != SPOOKY_FS_FL_MAGIC) {
+    printk(KERN_INFO "invalid Free-List magic:[%u] expected:[%u]", //
+           magic, SPOOKY_FS_FL_MAGIC);
     return -EINVAL;
   }
 

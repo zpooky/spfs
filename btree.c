@@ -362,22 +362,14 @@ spfs_inode_parse(struct buffer_head *bh, struct spfs_inode *out) {
   if (!spfs_sb_read_u32(bh, &pos, &magic)) {
     return -EIO;
   }
-  if (magic != SPOOKY_FS_BTREE_MAGIC) {
-    return -EINVAL;
-  }
 
   {
-    loff_t size;
     if (!spfs_sb_read_ino(bh, &pos, &out_inode->i_ino)) {
-      return -EIO;
-    }
-    if (!spfs_sb_read_u64(bh, &pos, &size)) {
       return -EIO;
     }
     if (!spfs_sb_read_u16(bh, &pos, &out_inode->i_mode)) {
       return -EIO;
     }
-    i_size_write(out_inode, size);
   }
 
   {
@@ -396,18 +388,18 @@ spfs_inode_parse(struct buffer_head *bh, struct spfs_inode *out) {
   }
 
   {
-    uint64_t atime;
-    uint64_t mtime;
-    uint64_t ctime;
-    if (!spfs_sb_read_u64(bh, &pos, &atime)) {
+    uint32_t atime;
+    uint32_t mtime;
+    uint32_t ctime;
+    if (!spfs_sb_read_u32(bh, &pos, &atime)) {
       return -EIO;
     }
 
-    if (!spfs_sb_read_u64(bh, &pos, &mtime)) {
+    if (!spfs_sb_read_u32(bh, &pos, &mtime)) {
       return -EIO;
     }
 
-    if (!spfs_sb_read_u64(bh, &pos, &ctime)) {
+    if (!spfs_sb_read_u32(bh, &pos, &ctime)) {
       return -EIO;
     }
 
@@ -433,6 +425,14 @@ spfs_inode_parse(struct buffer_head *bh, struct spfs_inode *out) {
     return -EIO;
   }
 
+  pr_err("btree:[magic:%X,ino:%lu,mode:%d,gid:%u,uid:%u,atime:%u,mtime:%u,"
+         "ctime:%u]\n", //
+         magic, out_inode->i_ino, out_inode->i_mode, 0, 0, 0, 0, 0);
+
+  if (magic != SPOOKY_FS_BTREE_MAGIC) {
+    return -EINVAL;
+  }
+
   return 0;
 }
 
@@ -446,11 +446,7 @@ spfs_inode_make(struct buffer_head *bh, const struct spfs_inode *in) {
   }
 
   {
-    loff_t size = i_size_read(in_inode);
     if (!spfs_sb_write_u32(bh, &pos, in_inode->i_ino)) {
-      return -EIO;
-    }
-    if (!spfs_sb_write_u64(bh, &pos, size)) {
       return -EIO;
     }
     if (!spfs_sb_write_u16(bh, &pos, in_inode->i_mode)) {
@@ -459,8 +455,8 @@ spfs_inode_make(struct buffer_head *bh, const struct spfs_inode *in) {
   }
 
   {
-    unsigned long gid = i_gid_read(in_inode);
-    unsigned long uid = i_uid_read(in_inode);
+    gid_t gid = i_gid_read(in_inode);
+    uid_t uid = i_uid_read(in_inode);
     if (!spfs_sb_write_u32(bh, &pos, gid)) {
       return -EIO;
     }
@@ -471,18 +467,18 @@ spfs_inode_make(struct buffer_head *bh, const struct spfs_inode *in) {
   }
 
   {
-    unsigned long long atime = in_inode->i_atime.tv_sec;
-    unsigned long long mtime = in_inode->i_mtime.tv_sec;
-    unsigned long long ctime = in_inode->i_ctime.tv_sec;
-    if (!spfs_sb_write_u64(bh, &pos, atime)) {
+    uint32_t atime = in_inode->i_atime.tv_sec;
+    uint32_t mtime = in_inode->i_mtime.tv_sec;
+    uint32_t ctime = in_inode->i_ctime.tv_sec;
+    if (!spfs_sb_write_u32(bh, &pos, atime)) {
       return -EIO;
     }
 
-    if (!spfs_sb_write_u64(bh, &pos, mtime)) {
+    if (!spfs_sb_write_u32(bh, &pos, mtime)) {
       return -EIO;
     }
 
-    if (!spfs_sb_write_u64(bh, &pos, ctime)) {
+    if (!spfs_sb_write_u32(bh, &pos, ctime)) {
       return -EIO;
     }
   }

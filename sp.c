@@ -201,7 +201,7 @@ spfs_inode_by_id(struct super_block *sb, spfs_ino needle) {
      */
     iget_failed(result);
 
-    return ERR_PTR(-ENOENT);
+    return NULL;
   }
 
   spfs_setup_inode_fp(result);
@@ -299,15 +299,19 @@ spfs_parse_dir_block(struct buffer_head *bh, size_t *pos,
   if (!spfs_sb_read_u32(bh, pos, &magic)) {
     return -EINVAL;
   }
-  if (magic != SPOOKY_FS_DIR_BLOCK_MAGIC) {
-    return -EINVAL;
-  }
 
   if (!spfs_sb_read_sector(bh, pos, &out->next)) {
     return -EINVAL;
   }
   if (!spfs_sb_read_u32(bh, pos, &out->children)) {
     return EINVAL;
+  }
+
+  pr_err("dir_block:[magic:%X,next:%lu,children:%u]\n", magic, out->next,
+         out->children);
+
+  if (magic != SPOOKY_FS_DIR_BLOCK_MAGIC) {
+    return -EINVAL;
   }
 
   return 0;
@@ -450,6 +454,7 @@ Lit:
 
     parent->start = spfs_dir_block_alloc(sb, &bh_pos, &bh, &block);
     if (!parent->start) {
+      res = -EINVAL;
       goto Lunlock;
     }
 
@@ -479,6 +484,8 @@ spfs_create(struct inode *parent, struct dentry *subject, umode_t mode,
 
   BUG_ON(!S_ISREG(mode));
 
+  pr_err("spfs_create()\n");
+
   spfs_parent = SPFS_INODE(parent);
   sb = parent->i_sb;
 
@@ -494,6 +501,8 @@ spfs_create(struct inode *parent, struct dentry *subject, umode_t mode,
     res = spfs_add_child(sb, spfs_parent, inode);
   }
   //}
+
+  pr_err("END spfs_create()\n");
 
   return res;
 }
@@ -513,6 +522,8 @@ spfs_mkdir(struct inode *parent, struct dentry *subject, umode_t mode) {
 
   BUG_ON(!sb);
 
+  pr_err("spfs_mkdir()\n");
+
   // newly created inode-lock {
   res = spfs_generic_create(spfs_parent, subject, mode);
   if (!res) {
@@ -529,6 +540,8 @@ spfs_mkdir(struct inode *parent, struct dentry *subject, umode_t mode) {
     res = spfs_add_child(sb, spfs_parent, inode);
   }
   //}
+
+  pr_err("END spfs_mkdir()\n");
 
   return res;
 }
@@ -659,13 +672,8 @@ spfs_inode_by_name(struct super_block *sb, struct spfs_inode *parent,
         .result = NULL,
     };
 
-    if (mutex_lock_interruptible(&parent->lock)) {
-      return ERR_PTR(-EINTR);
-    }
 
     spfs_for_all_children(parent, &data, &spfs_inode_by_name_cb);
-
-    mutex_unlock(&parent->lock);
 
     return data.result;
   }
@@ -686,58 +694,26 @@ spfs_lookup(struct inode *parent, struct dentry *dentry, unsigned int flags) {
   sb = parent->i_sb;
   BUG_ON(!sb);
 
+  pr_err("spfs_lookup()\n");
+
   result = spfs_inode_by_name(sb, SPFS_INODE(parent), dentry);
   if (result) {
     if (IS_ERR(result)) {
-      return ERR_PTR(PTR_ERR(result));
-    } else {
-      /* #d_add()
-       * XXX
-       * This adds the entry to the hash queues and initializes inode.
-       */
-      d_add(dentry, result);
+      return ERR_CAST(result);
     }
+    /* #d_add()
+     * XXX
+     * This adds the entry to the hash queues and initializes inode.
+     */
+    d_add(dentry, result);
 
     return dentry;
   }
 
+  pr_err("END spfs_lookup()\n");
+
   return NULL;
 }
-
-static const struct inode_operations spfs_inode_ops = {
-    /* create: called by the open(2) and creat(2) system calls. Only
-     * required if you want to support regular files. The dentry you
-     * get should not have an inode (i.e. it should be a negative
-     * dentry). Here you will probably call d_instantiate() with the
-     * dentry and the newly created inode
-     */
-    .create = spfs_create,
-
-    /* Perform a lookup of an inode given parent directory and filename.
-     *
-     * called when the VFS needs to look up an inode in a parent
-     * directory. The name to look for is found in the dentry. This
-     * method must call d_add() to insert the found inode into the
-     * dentry. The "i_count" field in the inode structure should be
-     * incremented. If the named inode does not exist a NULL inode
-     * should be inserted into the dentry (this is called a negative
-     * dentry). Returning an error code from this routine must only
-     * be done on a real error, otherwise creating inodes with system
-     * calls like create(2), mknod(2), mkdir(2) and so on will fail.
-     * If you wish to overload the dentry methods then you should
-     * initialise the "d_dop" field in the dentry; this is a pointer
-     * to a struct "dentry_operations".
-     * This method is called with the directory inode semaphore held
-     */
-    .lookup = spfs_lookup,
-
-    /* mkdir: called by the mkdir(2) system call. Only required if you want
-     * to support creating subdirectories. You will probably need to
-     * call d_instantiate() just as you would in the create() method
-     */
-    .mkdir = spfs_mkdir
-    /**/
-};
 
 //=====================================
 #define MIN(f, s) (f) > (s) ? (s) : (f)
@@ -760,10 +736,6 @@ spfs_parse_file_extent(struct buffer_head *bh, size_t *pos,
   if (!spfs_sb_read_u32(bh, pos, &magic)) {
     return -EINVAL;
   }
-  if (magic != SPOOKY_FS_FILE_BLOCK_MAGIC) {
-    return -EINVAL;
-  }
-
   if (!spfs_sb_read_sector(bh, pos, &out->next)) {
     return -EINVAL;
   }
@@ -771,6 +743,13 @@ spfs_parse_file_extent(struct buffer_head *bh, size_t *pos,
     return -EINVAL;
   }
   if (!spfs_sb_read_u32(bh, pos, &out->length)) {
+    return -EINVAL;
+  }
+
+  pr_err("dir_block:[magic:%X,next:%lu,capacity:%u,length:%u]\n", magic,
+         out->next, out->capacity, out->length);
+
+  if (magic != SPOOKY_FS_FILE_BLOCK_MAGIC) {
     return -EINVAL;
   }
 
@@ -947,6 +926,8 @@ spfs_read(struct file *file, char __user *in_buf, size_t in_len, loff_t *ppos) {
 
       res = spfs_read_file_extent(sb, &next, start, &in_buf, &in_len, &pos);
       if (res < 0) {
+
+        pr_err("<<< spfs_read()\n");
         return res;
       }
       read += res;
@@ -960,6 +941,8 @@ spfs_read(struct file *file, char __user *in_buf, size_t in_len, loff_t *ppos) {
 
     *ppos += read;
   }
+
+  pr_err("END spfs_read()\n");
 
   return read;
 }
@@ -1343,13 +1326,6 @@ spfs_write(struct file *file, const char __user *in_buf, size_t in_len,
   return written;
 }
 
-static const struct file_operations spfs_file_ops = {
-    /**/
-    .read = spfs_read,
-    .write = spfs_write
-    /**/
-};
-
 //=====================================
 struct spfs_iterate_ctx {
   struct dir_context *dir_ctx;
@@ -1404,18 +1380,11 @@ spfs_iterate(struct file *file, struct dir_context *dir_ctx) {
   }
 
   spfs_for_all_children(spfs_parent, &ctx, spfs_iterate_cb);
+
+  pr_err("end spfs_iterate()\n");
+
   return 0;
 }
-
-//=====================================
-static const struct file_operations spfs_dir_ops = {
-    /**/
-    .llseek = generic_file_llseek,
-    .read = generic_read_dir,
-
-    .iterate = spfs_iterate,
-    /**/
-};
 
 //=====================================
 static int
@@ -1566,11 +1535,14 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
   }
 
   root = spfs_inode_by_id(sb, sbi->root_id);
-  if (IS_ERR(root)) { // XXX change to only do this on NULL and fail otherwise
+  if (IS_ERR(root)) {
+    res = PTR_ERR(root);
+    goto Lerr;
+  } else if (root == NULL) {
     mode_t mode = S_IFDIR | S_IRWXU | S_IRWXG | S_IRWXO;
     root = spfs_new_inode(sb, NULL, mode);
     if (IS_ERR(root)) {
-      res = -ENOMEM;
+      res = PTR_ERR(root);
       goto Lerr;
     }
     sbi->root_id = root->i_inode.i_ino;
@@ -1599,7 +1571,7 @@ spfs_mount(struct file_system_type *fs_type, int flags, const char *dev_name,
 
   pr_err("spfs_mount(dev_name[%s])\n", dev_name);
   return mount_bdev(fs_type, flags, dev_name, data, spfs_fill_super_block);
-  /* return mount_nodev(fs_type, flags, data, spfs_fill_super_block); */
+  /* return mount_nodev(fs_type, flags, data, ); */
 }
 
 //=====================================
@@ -1630,7 +1602,11 @@ static struct inode *
 spfs_alloc_inode(struct super_block *sb) {
   struct spfs_inode *inode;
 
+  pr_debug("spfs_alloc_inode \n");
+
   inode = kmem_cache_alloc(spfs_inode_SLAB, GFP_KERNEL);
+
+  pr_debug("END spfs_alloc_inode \n");
 
   if (inode) {
     return &inode->i_inode;
@@ -1656,7 +1632,11 @@ spfs_free_inode_cb(struct rcu_head *head) {
 
 static void
 spfs_free_inode(struct inode *inode) {
+  pr_debug("spfs_free_inode\n");
+
   call_rcu(&inode->i_rcu, spfs_free_inode_cb);
+
+  pr_debug("END spfs_free_inode\n");
 }
 
 //=====================================
@@ -1727,8 +1707,46 @@ spfs_write_inode(struct inode *inode, struct writeback_control *wbc) {
   res = spfs_btree_modify(&sbi->tree, inode->i_ino, inode, spfs_mod_inode_cb);
   mutex_unlock(&sbi->tree.lock);
 
+  pr_err("END spfs_write_inode()\n");
+
   return res;
 }
+
+//=====================================
+static const struct inode_operations spfs_inode_ops = {
+    /* create: called by the open(2) and creat(2) system calls. Only
+     * required if you want to support regular files. The dentry you
+     * get should not have an inode (i.e. it should be a negative
+     * dentry). Here you will probably call d_instantiate() with the
+     * dentry and the newly created inode
+     */
+    .create = spfs_create,
+
+    /* Perform a lookup of an inode given parent directory and filename.
+     *
+     * called when the VFS needs to look up an inode in a parent
+     * directory. The name to look for is found in the dentry. This
+     * method must call d_add() to insert the found inode into the
+     * dentry. The "i_count" field in the inode structure should be
+     * incremented. If the named inode does not exist a NULL inode
+     * should be inserted into the dentry (this is called a negative
+     * dentry). Returning an error code from this routine must only
+     * be done on a real error, otherwise creating inodes with system
+     * calls like create(2), mknod(2), mkdir(2) and so on will fail.
+     * If you wish to overload the dentry methods then you should
+     * initialise the "d_dop" field in the dentry; this is a pointer
+     * to a struct "dentry_operations".
+     * This method is called with the directory inode semaphore held
+     */
+    .lookup = spfs_lookup,
+
+    /* mkdir: called by the mkdir(2) system call. Only required if you want
+     * to support creating subdirectories. You will probably need to
+     * call d_instantiate() just as you would in the create() method
+     */
+    .mkdir = spfs_mkdir
+    /**/
+};
 
 //=====================================
 static struct file_system_type spfs_fs_type = {
@@ -1740,6 +1758,24 @@ static struct file_system_type spfs_fs_type = {
     /* Shutdown an instance of the filesystem... */
     .kill_sb = kill_block_super,
     .owner = THIS_MODULE,
+};
+
+//=====================================
+static const struct file_operations spfs_file_ops = {
+    /**/
+    .read = spfs_read,
+    .write = spfs_write
+    /**/
+};
+
+//=====================================
+static const struct file_operations spfs_dir_ops = {
+    /**/
+    .llseek = generic_file_llseek,
+    .read = generic_read_dir,
+
+    .iterate = spfs_iterate,
+    /**/
 };
 
 //=====================================
