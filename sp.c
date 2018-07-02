@@ -404,7 +404,7 @@ spfs_add_child(struct super_block *sb, struct spfs_inode *parent,
   }
 
   start = parent->start;
-  // TODO this wont work when the first is full and the next is created...
+// TODO this wont work when the first is full and the next is created...
 
 Lit:
   if (start) {
@@ -918,7 +918,7 @@ spfs_read(struct file *file, char __user *in_buf, size_t in_len, loff_t *ppos) {
   pos = *ppos;
   read = 0;
 
-  printk(KERN_INFO "spfs_read()\n");
+  pr_err("spfs_read()\n");
 
   if (in_len == 0) {
     return 0;
@@ -1277,7 +1277,7 @@ spfs_write(struct file *file, const char __user *in_buf, size_t in_len,
   }
 
   /* XXX EFBIG - file to big*/
-  printk(KERN_INFO "spfs_write()\n");
+  pr_err("spfs_write()\n");
   if (in_len == 0) {
     return 0;
   }
@@ -1390,7 +1390,7 @@ spfs_iterate(struct file *file, struct dir_context *dir_ctx) {
                 /**/
   };
 
-  printk(KERN_INFO "spfs_iterate()\n");
+  pr_err("spfs_iterate()\n");
 
   parent = file_inode(file);
   spfs_parent = SPFS_INODE(parent);
@@ -1455,6 +1455,12 @@ spfs_read_super_block(struct buffer_head *bh, struct spfs_super_block *super) {
     goto Lout;
   }
 
+  /* pr_err("magic", start); */
+  pr_err("super:[magic:%u,version:%u,block_size:%u,id:%u,root_id:%u,btree_of:%u"
+         "free_of:%u]\n", //
+         super->magic, super->version, super->block_size, super->id,
+         super->root_id, super->btree_offset, super->free_list_offset);
+
   res = 0;
 Lout:
   return res;
@@ -1471,7 +1477,7 @@ spfs_super_block_init(struct super_block *sb, struct spfs_super_block *super,
 
   bh = sb_bread(sb, start);
   if (!bh) {
-    printk(KERN_INFO "bh = sb_bread(sb, start[%zu])\n", start);
+    pr_err("bh = sb_bread(sb, start[%zu])\n", start);
     return -EIO;
   }
 
@@ -1483,7 +1489,7 @@ spfs_super_block_init(struct super_block *sb, struct spfs_super_block *super,
   }
 
   if (super->magic != SPOOKY_FS_SUPER_MAGIC) {
-    printk(KERN_INFO "super->magic[%lu] != SPOOKY_FS_SUPER_MAGIC[%u]\n", //
+    pr_err("super->magic[%lu] != SPOOKY_FS_SUPER_MAGIC[%u]\n", //
            super->magic, SPOOKY_FS_SUPER_MAGIC);
     res = -EINVAL;
     goto Lrelease;
@@ -1522,7 +1528,7 @@ spfs_fill_super_block(struct super_block *sb, void *data, int silent) {
   struct spfs_super_block *sbi;
   const sector_t super_start = 0;
 
-  printk(KERN_INFO "spfs_kill_super_block()\n");
+  pr_err("spfs_kill_super_block()\n");
 
   BUG_ON(!sb);
 
@@ -1595,7 +1601,7 @@ spfs_mount(struct file_system_type *fs_type, int flags, const char *dev_name,
    * mount_nodev: mount a filesystem that is not backed by a device
    */
 
-  printk(KERN_INFO "spfs_mount(dev_name[%s])\n", dev_name);
+  pr_err("spfs_mount(dev_name[%s])\n", dev_name);
   return mount_bdev(fs_type, flags, dev_name, data, spfs_fill_super_block);
   /* return mount_nodev(fs_type, flags, data, spfs_fill_super_block); */
 }
@@ -1611,7 +1617,7 @@ spfs_put_super(struct super_block *sb) {
    */
   struct spfs_super_block *sbi;
 
-  printk(KERN_INFO "spfs_put_super()\n");
+  pr_err("spfs_put_super()\n");
 
   sbi = sb->s_fs_info;
   if (sbi) {
@@ -1713,7 +1719,7 @@ spfs_write_inode(struct inode *inode, struct writeback_control *wbc) {
   struct super_block *sb;
   struct spfs_super_block *sbi;
 
-  printk(KERN_INFO "spfs_write_inode()\n");
+  pr_err("spfs_write_inode()\n");
 
   sb = inode->i_sb;
   BUG_ON(!sb);
@@ -1782,11 +1788,11 @@ static int __init
 spfs_init(void) {
   int res;
 
-  printk(KERN_INFO "init spfs\n");
+  pr_err("init spfs\n");
 
   spfs_inode_SLAB = spfs_create_inode_SLAB();
   if (!spfs_inode_SLAB) {
-    printk(KERN_ERR "Failed creating inode SLAB cache\n");
+    pr_err("Failed creating inode SLAB cache\n");
     return -ENOMEM;
   }
 
@@ -1801,10 +1807,20 @@ spfs_init(void) {
   res = register_filesystem(&spfs_fs_type);
   if (res) {
     spfs_destroy_inode_SLAB(spfs_inode_SLAB);
-    printk(KERN_ERR "Failed register_filesystem(simplefs): %d\n", res);
+    pr_err("Failed register_filesystem(simplefs): %d\n", res);
   } else {
-    printk(KERN_INFO "Sucessfully register_filesystem(simplefs)\n");
+    pr_err("Sucessfully register_filesystem(simplefs)\n");
   }
+
+  pr_err("sizeof(int): %zu, sizeof(size_t): %zu, sizeof(sector_t): %zu, "
+         "sizeof(unsigned long): %zu, sizeof(void*): %zu, sizeof(u32): %zu, "
+         "sizeof(uint32_t): %zu, sizeof(uintptr_t): %zu, sizeof(bool): %zu, "
+         "sizeof(short): %zu, sizeof(unsigned long long): %zu, "
+         "sizeof(ssize_t): %zu", //
+         sizeof(int), sizeof(size_t), sizeof(sector_t), sizeof(unsigned long),
+         sizeof(void *), sizeof(u32), sizeof(uint32_t), sizeof(uintptr_t),
+         sizeof(bool), sizeof(short), sizeof(unsigned long long),
+         sizeof(ssize_t));
 
   return res;
 }
@@ -1813,13 +1829,13 @@ static void __exit
 spfs_exit(void) {
   int res;
 
-  printk(KERN_INFO "exit spfs\n");
+  pr_err("exit spfs\n");
 
   res = unregister_filesystem(&spfs_fs_type);
   if (res) {
-    printk(KERN_INFO "Faied unregister_filesystem(simplefs): %d\n", res);
+    pr_err("Faied unregister_filesystem(simplefs): %d\n", res);
   } else {
-    printk(KERN_INFO "Sucessfully unregister_filesystem(simplefs)\n");
+    pr_err("Sucessfully unregister_filesystem(simplefs)\n");
   }
   spfs_destroy_inode_SLAB(spfs_inode_SLAB);
 }

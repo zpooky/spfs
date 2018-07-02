@@ -28,8 +28,8 @@ fsck_read_u32(int fd, uint32_t *data) {
 
 static void
 print_super(struct spfs_super_block_wire *super) {
-  printf("super:[magic:%u,version:%u,block_size:%u,id:%u,root_id:%u,btree_of:%"
-         "u,free_of:%u]\n", //
+  printf("super:[magic:%u,version:%u,block_size:%u,id:%u,root_id:%u,btree_of:"
+         "%u,free_of:%u]\n", //
          super->magic, super->version, super->block_size, super->id,
          super->root_id, super->btree_offset, super->free_list_offset);
 }
