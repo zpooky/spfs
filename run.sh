@@ -9,3 +9,5 @@ cd mnt
 
 echo "touch 1"
 touch 1
+
+echo "asd" > asd

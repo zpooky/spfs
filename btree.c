@@ -146,11 +146,15 @@ bnode_make(struct spfs_btree *self, struct buffer_head *bh,
 static uint32_t
 bnode_length(const struct spfs_bnode *node) {
   __be32 dest;
+  uint32_t result;
   void *src = node->length;
 
   memcpy(&dest, src, sizeof(dest));
 
-  return be32_to_cpu(dest);
+  result = be32_to_cpu(dest);
+
+  BUG_ON(result > bnode_capacity(NULL)); // XXX
+  return result;
 }
 
 static uint32_t
@@ -158,7 +162,7 @@ bnode_set_length(struct spfs_bnode *node, uint32_t length) {
   __be32 src;
   void *dest = node->length;
 
-  BUG_ON(length > bnode_capacity(NULL));
+  BUG_ON(length > bnode_capacity(NULL)); // XXX
 
   src = cpu_to_be32(length);
   memcpy(dest, &src, sizeof(src));
@@ -363,6 +367,7 @@ bnode_bin_insert(struct spfs_btree *self, struct spfs_bnode *node,
 
   length = bnode_set_length(node, length + 1);
   bnode_set_child(node, length, gt);
+  BUG_ON(length != bnode_length(node));
 
   return gte;
 }
@@ -587,8 +592,8 @@ Lit:
         /* found! */
 
         spfs_inode_sector entry_offset = bentry_offset(gte);
-        brelse(bh); /*invalidatess $gte & $node*/
 
+        brelse(bh); /*invalidatess $gte & $node*/
         return btree_visit_entry(sb, entry_offset, closure, cb);
       }
 
@@ -824,9 +829,8 @@ btree_insert(struct spfs_btree *self, struct spfs_bnode *tree,
 
     bubble_make(bubble, in->i_inode.i_ino, page, 0);
 
+    mark_buffer_dirty(bh);
     brelse(bh);
-
-    /* return std::make_tuple(bubble, greater); */
     return 0;
   }
 
@@ -869,7 +873,9 @@ btree_insert(struct spfs_btree *self, struct spfs_bnode *tree,
   } else {
     sector_t child;
 
-    BUG_ON(bnode_is_empty(tree));
+    BUG_ON(bnode_child_length(self, tree) == 0);
+    BUG_ON(bnode_length(tree) == 0);
+    BUG_ON(bnode_is_empty(tree)); //<=====
 
     /* go down the last (greates) child */
     child = bnode_get_child(tree, bnode_length(tree));
@@ -1021,6 +1027,10 @@ bnode_alloc_root(struct spfs_btree *self, struct btree_bubble *bubble) {
     BUG_ON(ires == NULL);
   }
 
+  BUG_ON(bnode_length(&tree) == 0);
+  BUG_ON(bnode_child_length(self, &tree) == 0);
+  BUG_ON(bnode_is_empty(&tree));
+
   res = 0;
   goto Lrelease;
 
@@ -1029,6 +1039,7 @@ Lfree:
 
 Lrelease:
   if (bh) {
+    mark_buffer_dirty(bh);
     brelse(bh);
   }
 
@@ -1066,10 +1077,13 @@ spfs_btree_insert(struct spfs_btree *self, struct spfs_inode *in) {
     tree_ptr = &tree;
   }
 
+  pr_err("BEFORE: self->start = %lu\n", //
+         self->start);
   res = btree_insert(self, tree_ptr, in, &bubble, &out);
 
   if (bh) {
     /* invalidates $tree */
+    mark_buffer_dirty(bh); // XXX check return code
     brelse(bh);
   }
 
@@ -1079,6 +1093,8 @@ spfs_btree_insert(struct spfs_btree *self, struct spfs_inode *in) {
 
     BUG_ON(nres != 0);
   }
+  pr_err("AFTER: self->start = %lu\n", //
+         self->start);
 
   return res;
 }
